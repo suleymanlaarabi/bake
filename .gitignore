@@ -11,3 +11,4 @@ bin
 *.exp
 *.pdb
 bake
+examples/c/pkg_amalgamate_dependee/generated

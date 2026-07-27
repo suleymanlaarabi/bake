@@ -373,6 +373,9 @@ int16_t bake_project_parse_amalgamate_item(
         } else
         if (!strcmp(member, "disable-flags") || !strcmp(member, "disable_flags")) {
             ut_try (bake_json_set_array(&cfg->disable_flags, member, v), NULL);
+        } else
+        if (!strcmp(member, "dependencies")) {
+            ut_try (bake_json_set_boolean(&cfg->dependencies, member, v), NULL);
         } else {
             ut_throw("unknown member '%s' in amalgamate configuration", member);
             goto error;
@@ -1405,6 +1408,25 @@ error:
 }
 
 static
+bool bake_project_amalgamate_dependencies(
+    bake_project *p)
+{
+    if (!p->amalgamate_configs) {
+        return false;
+    }
+
+    ut_iter it = ut_ll_iter(p->amalgamate_configs);
+    while (ut_iter_hasNext(&it)) {
+        bake_amalgamate_config *cfg = ut_iter_next(&it);
+        if (cfg->dependencies) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static
 int16_t copy_amalgamated_from_dep(
     bake_config *config,
     bake_project *p,
@@ -1431,6 +1453,12 @@ int16_t copy_amalgamated_from_dep(
 
     const char *src_path = ut_locate(dependency, NULL, UT_LOCATE_DEVSRC);
     if (!src_path) {
+        if (!p->standalone) {
+            ut_throw("cannot amalgamate dependency '%s': source is unavailable",
+                dependency);
+            goto error;
+        }
+
         /* Possible that project is only config and no sources */
         ut_trace("cannot find sources for dependency '%s'", dependency);
     } else {
@@ -1442,7 +1470,10 @@ int16_t copy_amalgamated_from_dep(
             goto error;
         }
 
-        char *dst_path = ut_asprintf("%s"UT_OS_PS"deps", p->path);
+        char *dst_path = p->standalone
+            ? ut_asprintf("%s"UT_OS_PS"deps", p->path)
+            : ut_asprintf("%s"UT_OS_PS"amalgamate-deps", p->cache_path);
+        ut_try(ut_mkdir(dst_path), NULL);
         ut_trace("copy '%s' sources to '%s'", dependency, dst_path);
         dep->generate_path = dst_path;
 
@@ -1461,6 +1492,7 @@ int16_t copy_amalgamated_from_dep(
                 }
                 free(cfg->path);
                 cfg->path = NULL;
+                cfg->dependencies = false;
                 ut_ll_append(filtered, cfg);
             }
             ut_ll_free(dep->amalgamate_configs);
@@ -1494,6 +1526,16 @@ int16_t copy_amalgamated_from_dep(
     /* Recursively copy dependencies */
     if (dep->use) {
         ut_iter it = ut_ll_iter(dep->use);
+        while (ut_iter_hasNext(&it)) {
+            char *dep_of_dep = ut_iter_next(&it);
+            ut_try(
+                copy_amalgamated_from_dep(
+                    config, p, amalg_driver, dep_of_dep, amalg_copied), NULL);
+        }
+    }
+
+    if (dep->use_private) {
+        ut_iter it = ut_ll_iter(dep->use_private);
         while (ut_iter_hasNext(&it)) {
             char *dep_of_dep = ut_iter_next(&it);
             ut_try(
@@ -1555,10 +1597,15 @@ int16_t bake_check_dependency(
         }
     }
 
-    /* If standalone, copy source of dependencies to project */    
-    if (p->standalone) {
+    /* Copy dependency amalgamations when requested. Standalone projects use
+     * them as build sources; regular projects only use them while generating
+     * their amalgamated output. */
+    if (p->standalone || bake_project_amalgamate_dependencies(p)) {
         ut_try(copy_amalgamated_from_dep(
             config, p, amalg_driver, dependency, amalg_copied), NULL);
+    }
+
+    if (p->standalone) {
         goto proceed;
     }
 
@@ -1608,13 +1655,15 @@ int16_t bake_project_check_dependencies(
     char *deps_path = NULL, *deps_dependee_file = NULL;
     int32_t total_dependencies = 0;
     ut_ll amalg_copied = NULL;
+    bool amalgamate_dependencies =
+        bake_project_amalgamate_dependencies(project);
 
     if (!project->language) {
         return 0;
     }
 
     bake_driver *amalg_driver = NULL;
-    if (project->standalone) {
+    if (project->standalone || amalgamate_dependencies) {
         amalg_driver = bake_driver_get("amalgamate");
         if (!amalg_driver) {
             ut_throw("failed to locate amalgamation driver");
@@ -1632,6 +1681,12 @@ int16_t bake_project_check_dependencies(
         deps_dependee_file = ut_asprintf(
             "%s"UT_OS_PS"/dependee.json", deps_path);
         ut_mkdir(deps_path);
+    } else if (amalgamate_dependencies) {
+        char *amalgamate_deps_path = ut_asprintf(
+            "%s"UT_OS_PS"amalgamate-deps", project->cache_path);
+        ut_try(ut_rm(amalgamate_deps_path), NULL);
+        ut_try(ut_mkdir(amalgamate_deps_path), NULL);
+        free(amalgamate_deps_path);
     }
 
     if (project->use) {

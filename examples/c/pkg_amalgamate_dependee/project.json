@@ -1,0 +1,14 @@
+{
+    "id": "amalgamate_dependee",
+    "type": "package",
+    "value": {
+        "use": ["amalgamate_dependency"],
+        "use_private": ["amalgamate_private"],
+        "amalgamate": [
+            {
+                "path": "generated",
+                "dependencies": true
+            }
+        ]
+    }
+}

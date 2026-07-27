@@ -360,6 +360,8 @@ int amalgamate(
     const char *include_name,
     FILE *out,
     const char *include_path,
+    const char *source_include_path,
+    const char *dependency_path,
     bool is_include,
     const char *const_file,
     const char *src_file,
@@ -589,7 +591,7 @@ int amalgamate(
             /* If this is in the bake_config.h file, replace the statement with
              * one that uses "". Assume that the file exists, as bake may still
              * be generating it. */
-            if (bake_config_h) {
+            if (bake_config_h && !dependency_path) {
                 fprintf(out, "#include \"%s\"\n", include);
                 free(include);
                 continue;
@@ -601,6 +603,24 @@ int amalgamate(
             path = combine_path(include_path, include);
             if (ut_file_test(path) == 1) {
                 recurse = true;
+            } else if (source_include_path) {
+                free(path);
+                path = combine_path(source_include_path, include);
+                if (ut_file_test(path) == 1) {
+                    recurse = true;
+                } else if (dependency_path) {
+                    free(path);
+                    path = combine_path(dependency_path, include);
+                    if (ut_file_test(path) == 1) {
+                        recurse = true;
+                    }
+                }
+            } else if (dependency_path) {
+                free(path);
+                path = combine_path(dependency_path, include);
+                if (ut_file_test(path) == 1) {
+                    recurse = true;
+                }
             }
         } else {
             /* Relative path: search relative to current file, then in the
@@ -611,6 +631,33 @@ int amalgamate(
                 path = combine_path(include_path, include);
                 if (ut_file_test(path) == 1) {
                     recurse = true;
+                } else if (source_include_path) {
+                    free(path);
+                    path = combine_path(source_include_path, include);
+                    if (ut_file_test(path) == 1) {
+                        recurse = true;
+                    } else if (dependency_path) {
+                        free(path);
+                        path = combine_path(dependency_path, include);
+                        if (ut_file_test(path) == 1) {
+                            recurse = true;
+                        } else {
+                            free(path);
+                            path = NULL;
+                        }
+                    } else {
+                        free(path);
+                        path = NULL;
+                    }
+                } else if (dependency_path) {
+                    free(path);
+                    path = combine_path(dependency_path, include);
+                    if (ut_file_test(path) == 1) {
+                        recurse = true;
+                    } else {
+                        free(path);
+                        path = NULL;
+                    }
                 } else {
                     free(path);
                     path = NULL;
@@ -621,8 +668,9 @@ int amalgamate(
         }
 
         if (recurse) {
-            ut_try( amalgamate(include_name, out, include_path, is_include, path,
-                file, line_count, files_parsed, disable, main_included,
+            ut_try( amalgamate(include_name, out, include_path,
+                source_include_path, dependency_path, is_include, path, file,
+                line_count, files_parsed, disable, main_included,
                 emitted_includes, if_depth), NULL);
         } else if (mark_verbatim_include(
             emitted_includes, if_depth, include, relative))
@@ -884,6 +932,7 @@ int generate_one(
     const char *project_id,
     const char *include_path,
     const char *src_path,
+    const char *dependency_path,
     const char *include_file,
     const char *target_path,
     bake_amalgamate_config *cfg)
@@ -928,9 +977,9 @@ int generate_one(
 
     fprintf(include_out, "// Comment out this line when using as DLL\n");
     fprintf(include_out, "#define %s_STATIC\n", project_id);
-    ut_try( amalgamate(output_base, include_out, include_path, true,
-        include_file, "(main header)", 0, files_parsed, disable, NULL,
-        NULL, 0), NULL);
+    ut_try( amalgamate(output_base, include_out, include_path, src_path,
+        dependency_path, true, include_file, "(main header)", 0,
+        files_parsed, disable, NULL, NULL, 0), NULL);
     fclose(include_out);
 
     /* -- Amalgamate source -- */
@@ -942,11 +991,49 @@ int generate_one(
 
     bool main_included = false;
 
+    /* Dependency implementations must precede project sources. Private
+     * dependency declarations are intentionally not part of the public
+     * header, so emitting their implementations first also provides the
+     * declarations needed by project source files. */
+    if (dependency_path) {
+        ut_ll dependency_sources = ut_ll_new();
+        ut_iter dependency_it;
+        ut_try( ut_dir_iter(
+            dependency_path, "//*.c,*.cpp", &dependency_it), NULL);
+        while (ut_iter_hasNext(&dependency_it)) {
+            char *file = ut_iter_next(&dependency_it);
+            char *file_path = combine_path(dependency_path, file);
+            ut_ll_append(dependency_sources, file_path);
+        }
+
+        uint32_t dependency_count = ut_ll_count(dependency_sources);
+        char **dependency_buffer = malloc(
+            sizeof(char*) * (dependency_count ? dependency_count : 1));
+        uint32_t dependency_index = 0;
+        dependency_it = ut_ll_iter(dependency_sources);
+        while (ut_iter_hasNext(&dependency_it)) {
+            dependency_buffer[dependency_index ++] =
+                ut_iter_next(&dependency_it);
+        }
+        ut_ll_free(dependency_sources);
+
+        qsort(dependency_buffer, dependency_index, sizeof(char*),
+            file_path_compare);
+        for (uint32_t i = 0; i < dependency_index; i ++) {
+            char *file_path = dependency_buffer[i];
+            ut_try( amalgamate(output_base, src_out, include_path, src_path,
+                dependency_path, false, file_path, "(dependency source)", 0,
+                files_parsed, disable, &main_included, emitted, 0), NULL);
+            free(file_path);
+        }
+        free(dependency_buffer);
+    }
+
     char *main_src_file = find_main_src_file(project_obj, src_path);
     if (main_src_file) {
-        ut_try( amalgamate(output_base, src_out, include_path, false,
-            main_src_file, "(main source)", 0, files_parsed, disable,
-            &main_included, emitted, 0), NULL);
+        ut_try( amalgamate(output_base, src_out, include_path, src_path,
+            dependency_path, false, main_src_file, "(main source)", 0,
+            files_parsed, disable, &main_included, emitted, 0), NULL);
     }
 
     /* Recursively iterate sources and store the paths */
@@ -973,9 +1060,9 @@ int generate_one(
     for (x = 0; x < i; x ++) {
         char *file_path = buffer[x];
         if (!main_src_file || strcmp(file_path, main_src_file)) {
-            ut_try( amalgamate(output_base, src_out, include_path, false,
-                file_path, "(source)", 0, files_parsed, disable,
-                &main_included, emitted, 0), NULL);
+            ut_try( amalgamate(output_base, src_out, include_path, src_path,
+                dependency_path, false, file_path, "(source)", 0,
+                files_parsed, disable, &main_included, emitted, 0), NULL);
         }
         free(file_path);
     }
@@ -1008,9 +1095,9 @@ int generate_one(
             m_created = true;
         }
 
-        ut_try( amalgamate(output_base, m_out, include_path, false,
-            file_path, "(obj-C source)", 0, objc_files_parsed, disable,
-            &main_included, objc_emitted, 0), NULL);
+        ut_try( amalgamate(output_base, m_out, include_path, src_path,
+            dependency_path, false, file_path, "(obj-C source)", 0,
+            objc_files_parsed, disable, &main_included, objc_emitted, 0), NULL);
 
         free(file_path);
     }
@@ -1089,6 +1176,7 @@ void generate(
         synth.path = project_obj->amalgamate_path;
         synth.prefix = NULL;
         synth.disable_flags = NULL;
+        synth.dependencies = false;
         synth_list = ut_ll_new();
         ut_ll_append(synth_list, &synth);
         configs = synth_list;
@@ -1097,8 +1185,18 @@ void generate(
     ut_iter it = ut_ll_iter(configs);
     while (ut_iter_hasNext(&it)) {
         bake_amalgamate_config *cfg = ut_iter_next(&it);
-        if (generate_one(project_obj, project, include_path, src_path,
-            include_file, target_path, cfg))
+        char *dependency_path = NULL;
+        if (project_obj->standalone) {
+            dependency_path = combine_path(project_path, "deps");
+        } else if (cfg->dependencies) {
+            dependency_path = combine_path(
+                project_obj->cache_path, "amalgamate-deps");
+        }
+
+        int result = generate_one(project_obj, project, include_path, src_path,
+            dependency_path, include_file, target_path, cfg);
+        free(dependency_path);
+        if (result)
         {
             if (synth_list) {
                 ut_ll_free(synth_list);

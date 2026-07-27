@@ -79,6 +79,7 @@ typedef struct bake_amalgamate_config {
     char *path;             /* Output subdirectory (NULL = project/generate path) */
     char *prefix;           /* Output base name (NULL = project id) */
     ut_ll disable_flags;    /* Macro names to treat as undefined (list of char*) */
+    bool dependencies;      /* Embed use/use_private dependencies in output */
 } bake_amalgamate_config;
 
 struct bake_project {

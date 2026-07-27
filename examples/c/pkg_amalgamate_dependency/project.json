@@ -1,0 +1,7 @@
+{
+    "id": "amalgamate_dependency",
+    "type": "package",
+    "value": {
+        "use": ["amalgamate_leaf"]
+    }
+}

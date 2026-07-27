@@ -43,6 +43,15 @@ jobs:
         run: |
           bake examples --strict
 
+      - name: test amalgamated dependencies
+        run: |
+          cc -std=c99 \
+            examples/c/pkg_amalgamate_dependee/generated/amalgamate_dependee.c \
+            examples/c/pkg_amalgamate_dependee/standalone/main.c \
+            -Iexamples/c/pkg_amalgamate_dependee/generated \
+            -o /tmp/amalgamate-dependencies
+          /tmp/amalgamate-dependencies
+
   build-windows:
     timeout-minutes: 10
     runs-on: windows-latest

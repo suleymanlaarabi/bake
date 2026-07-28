@@ -56,6 +56,12 @@ test "$dependency_line" -lt "$project_line"
 ! grep -q '^int amalgamate_private_value' \
     "$conditional/generated-public/amalgamate_conditional.c"
 
+# Dependencies selected only by disabled flags are omitted physically, not
+# retained behind dead preprocessor branches.
+disabled="$conditional/generated-disabled/amalgamate_conditional_disabled"
+! grep -Eq 'amalgamate_(leaf|dependency|private)_value' "$disabled.c"
+! grep -Eq 'amalgamate_(leaf|dependency|private)_value' "$disabled.h"
+
 # Generation is reproducible.
 cp "$generated/amalgamate_conditional.c" "$out_dir/before.c"
 cp "$generated/amalgamate_conditional.h" "$out_dir/before.h"

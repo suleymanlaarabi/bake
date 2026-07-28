@@ -221,6 +221,23 @@ bool eval_defined_expr(
     }
 
     if (strncmp(p, "defined", 7)) {
+        const char *name = p;
+        while (is_ident_char(*p)) {
+            p ++;
+        }
+        size_t name_len = (size_t)(p - name);
+        if (!name_len || !disable_contains(disable, name, name_len)) {
+            return false;
+        }
+
+        p = skip_ws(p);
+        if (*p == '\0' || *p == '\n' || *p == '\r' ||
+            (!negate && !strncmp(p, "&&", 2)) ||
+            (negate && !strncmp(p, "||", 2)))
+        {
+            *value_out = negate;
+            return true;
+        }
         return false;
     }
     p += 7;
@@ -326,6 +343,54 @@ bool cond_eval_managed(
     }
 
     return false;
+}
+
+/* Return true when a dependency condition is an OR-list made entirely from
+ * disabled feature macros. More complex user expressions are kept so the
+ * amalgamator never removes a package it cannot evaluate safely. */
+static
+bool dependency_condition_is_disabled(
+    const char *condition,
+    ut_ll disable)
+{
+    if (!condition || !disable) {
+        return false;
+    }
+
+    const char *ptr = condition;
+    do {
+        ptr = skip_ws(ptr);
+        bool parenthesized = false;
+        if (*ptr == '(') {
+            parenthesized = true;
+            ptr = skip_ws(ptr + 1);
+        }
+
+        const char *name = ptr;
+        while (is_ident_char(*ptr)) {
+            ptr ++;
+        }
+        size_t name_len = (size_t)(ptr - name);
+        if (!name_len || !disable_contains(disable, name, name_len)) {
+            return false;
+        }
+
+        ptr = skip_ws(ptr);
+        if (parenthesized) {
+            if (*ptr != ')') {
+                return false;
+            }
+            ptr = skip_ws(ptr + 1);
+        }
+
+        if (!*ptr) {
+            return true;
+        }
+        if (ptr[0] != '|' || ptr[1] != '|') {
+            return false;
+        }
+        ptr += 2;
+    } while (true);
 }
 
 /* Records a verbatim (non-inlined) include and reports whether it should be
@@ -589,11 +654,20 @@ int amalgamate(
             continue;
         }
 
-        /* Drop the enable "#define FLAG" for a disabled flag so the flag is
-         * genuinely undefined for the compiler. */
+        /* Keep disabled feature flags available to consumers, but force them
+         * to zero so both #if FLAG and public configuration checks behave as
+         * expected. */
         if (has_disable && !line_in_block_comment_at_start &&
             is_disabled_define(line, disable))
         {
+            const char *define = skip_ws(line);
+            define = skip_ws(define + 1);
+            define = skip_ws(define + 6);
+            const char *name = define;
+            while (is_ident_char(*define)) {
+                define ++;
+            }
+            fprintf(out, "#define %.*s 0\n", (int)(define - name), name);
             continue;
         }
 
@@ -733,6 +807,11 @@ int amalgamate(
             while (ut_iter_hasNext(&dependency_it)) {
                 bake_amalgamate_dependency *dependency =
                     ut_iter_next(&dependency_it);
+                if (dependency_condition_is_disabled(
+                    dependency->condition, disable))
+                {
+                    continue;
+                }
                 char *base = ut_strdup(dependency->id);
                 for (char *ptr = base; *ptr; ptr ++) {
                     if (*ptr == '.') {
@@ -1130,6 +1209,11 @@ int generate_one(
         while (ut_iter_hasNext(&dependency_it)) {
             bake_amalgamate_dependency *dependency =
                 ut_iter_next(&dependency_it);
+            if (dependency_condition_is_disabled(
+                dependency->condition, disable))
+            {
+                continue;
+            }
             char *source = dependency_output_file(dependency, "c");
             if (ut_file_test(source) != 1) {
                 free(source);

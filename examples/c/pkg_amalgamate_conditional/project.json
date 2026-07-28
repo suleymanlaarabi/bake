@@ -26,6 +26,24 @@
                         "use": ["amalgamate_dependency"]
                     }
                 ]
+            },
+            {
+                "path": "generated-disabled",
+                "prefix": "amalgamate_conditional_disabled",
+                "disable-flags": [
+                    "AMALGAMATE_WITH_PUBLIC",
+                    "AMALGAMATE_WITH_PRIVATE"
+                ],
+                "dependencies": [
+                    {
+                        "when": "AMALGAMATE_WITH_PUBLIC",
+                        "use": ["amalgamate_dependency"]
+                    },
+                    {
+                        "when": "AMALGAMATE_WITH_PRIVATE",
+                        "use": ["amalgamate_private"]
+                    }
+                ]
             }
         ]
     }

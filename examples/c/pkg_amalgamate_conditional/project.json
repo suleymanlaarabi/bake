@@ -1,0 +1,32 @@
+{
+    "id": "amalgamate_conditional",
+    "type": "package",
+    "value": {
+        "use": ["amalgamate_dependency"],
+        "use_private": ["amalgamate_private"],
+        "amalgamate": [
+            {
+                "path": "generated",
+                "dependencies": [
+                    {
+                        "when": "AMALGAMATE_WITH_PUBLIC",
+                        "use": ["amalgamate_dependency"]
+                    },
+                    {
+                        "when": "AMALGAMATE_WITH_PRIVATE",
+                        "use": ["amalgamate_private"]
+                    }
+                ]
+            },
+            {
+                "path": "generated-public",
+                "dependencies": [
+                    {
+                        "when": "AMALGAMATE_WITH_PUBLIC",
+                        "use": ["amalgamate_dependency"]
+                    }
+                ]
+            }
+        ]
+    }
+}

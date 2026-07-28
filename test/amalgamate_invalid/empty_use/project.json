@@ -1,0 +1,12 @@
+{
+    "id": "invalid_amalgamate_empty_use",
+    "type": "package",
+    "value": {
+        "amalgamate": [{
+            "dependencies": [{
+                "when": "FLAG",
+                "use": []
+            }]
+        }]
+    }
+}

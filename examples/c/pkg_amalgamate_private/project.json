@@ -1,4 +1,7 @@
 {
     "id": "amalgamate_private",
-    "type": "package"
+    "type": "package",
+    "value": {
+        "use_private": ["amalgamate_leaf"]
+    }
 }

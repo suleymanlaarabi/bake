@@ -352,6 +352,193 @@ int16_t bake_validate_dep_array(
     return 0;
 }
 
+static
+void bake_amalgamate_dependency_group_free(
+    bake_amalgamate_dependency_group *group)
+{
+    if (!group) {
+        return;
+    }
+    free(group->when);
+    bake_attr_free_string_array(group->use);
+    free(group);
+}
+
+static
+void bake_amalgamate_dependency_free(
+    bake_amalgamate_dependency *dependency)
+{
+    if (!dependency) {
+        return;
+    }
+    free(dependency->id);
+    free(dependency->condition);
+    free(dependency->path);
+    free(dependency);
+}
+
+static
+void bake_amalgamate_config_free(
+    bake_amalgamate_config *cfg)
+{
+    if (!cfg) {
+        return;
+    }
+
+    free(cfg->path);
+    free(cfg->prefix);
+    bake_attr_free_string_array(cfg->disable_flags);
+
+    if (cfg->dependency_groups) {
+        ut_iter it = ut_ll_iter(cfg->dependency_groups);
+        while (ut_iter_hasNext(&it)) {
+            bake_amalgamate_dependency_group_free(ut_iter_next(&it));
+        }
+        ut_ll_free(cfg->dependency_groups);
+    }
+
+    if (cfg->dependency_packages) {
+        ut_iter it = ut_ll_iter(cfg->dependency_packages);
+        while (ut_iter_hasNext(&it)) {
+            bake_amalgamate_dependency_free(ut_iter_next(&it));
+        }
+        ut_ll_free(cfg->dependency_packages);
+    }
+
+    free(cfg);
+}
+
+static
+int16_t bake_project_parse_amalgamate_dependency_group(
+    bake_amalgamate_config *cfg,
+    JSON_Object *o,
+    uint32_t index)
+{
+    bake_amalgamate_dependency_group *group =
+        ut_calloc(sizeof(bake_amalgamate_dependency_group));
+
+    uint32_t i, count = json_object_get_count(o);
+    for (i = 0; i < count; i ++) {
+        const char *member = json_object_get_name(o, i);
+        JSON_Value *v = json_object_get_value_at(o, i);
+
+        if (!strcmp(member, "when")) {
+            ut_try(bake_json_set_string(&group->when, member, v), NULL);
+        } else if (!strcmp(member, "use")) {
+            ut_try(bake_json_set_array(&group->use, member, v), NULL);
+            ut_try(bake_validate_dep_array(group->use), NULL);
+        } else {
+            ut_throw(
+                "unknown member '%s' in amalgamate dependency group %u",
+                member, index);
+            goto error;
+        }
+    }
+
+    if (!group->when) {
+        ut_throw(
+            "missing required member 'when' in amalgamate dependency group %u",
+            index);
+        goto error;
+    }
+
+    const char *ptr = group->when;
+    bool has_non_ws = false;
+    while (*ptr) {
+        if (*ptr == '\n' || *ptr == '\r') {
+            ut_throw(
+                "'when' in amalgamate dependency group %u must be a "
+                "single-line preprocessor expression", index);
+            goto error;
+        }
+        if (!isspace((unsigned char)*ptr)) {
+            has_non_ws = true;
+        }
+        ptr ++;
+    }
+    if (!has_non_ws) {
+        ut_throw(
+            "'when' in amalgamate dependency group %u must not be empty",
+            index);
+        goto error;
+    }
+
+    char *start = group->when;
+    while (isspace((unsigned char)*start)) {
+        start ++;
+    }
+    char *end = start + strlen(start);
+    while (end > start && isspace((unsigned char)end[-1])) {
+        end --;
+    }
+    char *trimmed = malloc((size_t)(end - start) + 1);
+    memcpy(trimmed, start, (size_t)(end - start));
+    trimmed[end - start] = '\0';
+    free(group->when);
+    group->when = trimmed;
+
+    if (!group->use || !ut_ll_count(group->use)) {
+        ut_throw(
+            "member 'use' in amalgamate dependency group %u must be a "
+            "non-empty array", index);
+        goto error;
+    }
+
+    if (!cfg->dependency_groups) {
+        cfg->dependency_groups = ut_ll_new();
+    }
+    ut_ll_append(cfg->dependency_groups, group);
+    return 0;
+error:
+    bake_amalgamate_dependency_group_free(group);
+    return -1;
+}
+
+static
+int16_t bake_project_parse_amalgamate_dependencies(
+    bake_amalgamate_config *cfg,
+    JSON_Value *v)
+{
+    JSON_Value_Type type = json_value_get_type(v);
+    if (type == JSONBoolean) {
+        cfg->dependencies = json_value_get_boolean(v);
+        return 0;
+    }
+
+    if (type != JSONArray) {
+        ut_throw(
+            "expected boolean or array for member 'dependencies' in "
+            "amalgamate configuration");
+        goto error;
+    }
+
+    JSON_Array *array = json_value_get_array(v);
+    uint32_t i, count = json_array_get_count(array);
+    if (!count) {
+        ut_throw(
+            "member 'dependencies' in amalgamate configuration must not be "
+            "an empty array");
+        goto error;
+    }
+
+    cfg->dependencies = true;
+    for (i = 0; i < count; i ++) {
+        JSON_Value *item = json_array_get_value(array, i);
+        if (json_value_get_type(item) != JSONObject) {
+            ut_throw(
+                "dependency group %u in amalgamate configuration must be "
+                "an object", i);
+            goto error;
+        }
+        ut_try(bake_project_parse_amalgamate_dependency_group(
+            cfg, json_value_get_object(item), i), NULL);
+    }
+
+    return 0;
+error:
+    return -1;
+}
+
 /* Parse a single object in the "amalgamate" array */
 static
 int16_t bake_project_parse_amalgamate_item(
@@ -375,7 +562,7 @@ int16_t bake_project_parse_amalgamate_item(
             ut_try (bake_json_set_array(&cfg->disable_flags, member, v), NULL);
         } else
         if (!strcmp(member, "dependencies")) {
-            ut_try (bake_json_set_boolean(&cfg->dependencies, member, v), NULL);
+            ut_try (bake_project_parse_amalgamate_dependencies(cfg, v), NULL);
         } else {
             ut_throw("unknown member '%s' in amalgamate configuration", member);
             goto error;
@@ -386,7 +573,65 @@ int16_t bake_project_parse_amalgamate_item(
 
     return 0;
 error:
-    free(cfg);
+    bake_amalgamate_config_free(cfg);
+    return -1;
+}
+
+static
+bool bake_string_list_contains(
+    ut_ll list,
+    const char *value)
+{
+    if (!list) {
+        return false;
+    }
+    ut_iter it = ut_ll_iter(list);
+    while (ut_iter_hasNext(&it)) {
+        const char *item = ut_iter_next(&it);
+        if (!strcmp(item, value)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static
+int16_t bake_project_validate_amalgamate_dependencies(
+    bake_project *p)
+{
+    if (!p->amalgamate_configs) {
+        return 0;
+    }
+
+    ut_iter cfg_it = ut_ll_iter(p->amalgamate_configs);
+    while (ut_iter_hasNext(&cfg_it)) {
+        bake_amalgamate_config *cfg = ut_iter_next(&cfg_it);
+        if (!cfg->dependency_groups) {
+            continue;
+        }
+
+        ut_iter group_it = ut_ll_iter(cfg->dependency_groups);
+        while (ut_iter_hasNext(&group_it)) {
+            bake_amalgamate_dependency_group *group =
+                ut_iter_next(&group_it);
+            ut_iter use_it = ut_ll_iter(group->use);
+            while (ut_iter_hasNext(&use_it)) {
+                const char *root = ut_iter_next(&use_it);
+                if (!bake_string_list_contains(p->use, root) &&
+                    !bake_string_list_contains(p->use_private, root))
+                {
+                    ut_throw(
+                        "amalgamate dependency root '%s' is not a direct "
+                        "'use' or 'use_private' dependency of project '%s'",
+                        root, p->id);
+                    goto error;
+                }
+            }
+        }
+    }
+
+    return 0;
+error:
     return -1;
 }
 
@@ -529,6 +774,8 @@ int16_t bake_project_parse_value(
          * refer to dependencies that are not copied to the bake environment. */
         p->public = false;
     }
+
+    ut_try(bake_project_validate_amalgamate_dependencies(p), NULL);
 
     return 0;
 error:
@@ -1070,6 +1317,15 @@ void bake_project_free(
     bake_attr_free_string_array(project->includes);
     bake_attr_free_string_array(project->link);
 
+    if (project->amalgamate_configs) {
+        ut_iter cfg_it = ut_ll_iter(project->amalgamate_configs);
+        while (ut_iter_hasNext(&cfg_it)) {
+            bake_amalgamate_config_free(ut_iter_next(&cfg_it));
+        }
+        ut_ll_free(project->amalgamate_configs);
+        project->amalgamate_configs = NULL;
+    }
+
     ut_iter it = ut_ll_iter(project->drivers);
     while (ut_iter_hasNext(&it)) {
         bake_project_driver *driver = ut_iter_next(&it);
@@ -1427,6 +1683,32 @@ bool bake_project_amalgamate_dependencies(
 }
 
 static
+int16_t bake_generate_dependency_amalgamation(
+    bake_config *config,
+    bake_project *dep,
+    bake_driver *amalg_driver,
+    const char *dst_path)
+{
+    const char *saved_generate_path = dep->generate_path;
+    char *saved_amalgamate_path = dep->amalgamate_path;
+    ut_ll saved_configs = dep->amalgamate_configs;
+
+    dep->generate_path = dst_path;
+    dep->amalgamate_path = NULL;
+    dep->amalgamate_configs = NULL;
+
+    ut_log_push("copy-amalgamate");
+    int16_t result = bake_driver__generate(amalg_driver, config, dep);
+    ut_log_pop();
+
+    dep->generate_path = saved_generate_path;
+    dep->amalgamate_path = saved_amalgamate_path;
+    dep->amalgamate_configs = saved_configs;
+
+    return result;
+}
+
+static
 int16_t copy_amalgamated_from_dep(
     bake_config *config,
     bake_project *p,
@@ -1475,32 +1757,8 @@ int16_t copy_amalgamated_from_dep(
             : ut_asprintf("%s"UT_OS_PS"amalgamate-deps", p->cache_path);
         ut_try(ut_mkdir(dst_path), NULL);
         ut_trace("copy '%s' sources to '%s'", dependency, dst_path);
-        dep->generate_path = dst_path;
-
-        ut_log_push("copy-amalgamate");
-
-        // when amalgamating dependencies, copy the canonical output directly
-        // into deps/ (no subdirectory, no prefixed variants)
-        dep->amalgamate_path = NULL;
-        if (dep->amalgamate_configs) {
-            ut_ll filtered = ut_ll_new();
-            ut_iter cfg_it = ut_ll_iter(dep->amalgamate_configs);
-            while (ut_iter_hasNext(&cfg_it)) {
-                bake_amalgamate_config *cfg = ut_iter_next(&cfg_it);
-                if (cfg->prefix && cfg->prefix[0]) {
-                    continue;
-                }
-                free(cfg->path);
-                cfg->path = NULL;
-                cfg->dependencies = false;
-                ut_ll_append(filtered, cfg);
-            }
-            ut_ll_free(dep->amalgamate_configs);
-            dep->amalgamate_configs = filtered;
-        }
-
-        ut_try( bake_driver__generate(amalg_driver, config, dep), NULL);
-        ut_log_pop();
+        ut_try(bake_generate_dependency_amalgamation(
+            config, dep, amalg_driver, dst_path), NULL);
 
         free(dst_path);
     }
@@ -1546,6 +1804,340 @@ int16_t copy_amalgamated_from_dep(
 
     bake_project_free(dep);
 
+    return 0;
+error:
+    return -1;
+}
+
+typedef struct bake_amalgamate_dependency_node {
+    char *id;
+    ut_ll conditions;
+    ut_ll dependencies;
+    bool unconditional;
+    int8_t visit;
+} bake_amalgamate_dependency_node;
+
+static
+void bake_amalgamate_dependency_node_free(
+    bake_amalgamate_dependency_node *node)
+{
+    if (!node) {
+        return;
+    }
+    free(node->id);
+    bake_attr_free_string_array(node->conditions);
+    bake_attr_free_string_array(node->dependencies);
+    free(node);
+}
+
+static
+int bake_string_ptr_compare(
+    const void *ptr_1,
+    const void *ptr_2)
+{
+    const char *str_1 = *(const char**)ptr_1;
+    const char *str_2 = *(const char**)ptr_2;
+    return strcmp(str_1, str_2);
+}
+
+static
+char** bake_sorted_string_list(
+    ut_ll list,
+    uint32_t *count_out)
+{
+    uint32_t count = list ? ut_ll_count(list) : 0;
+    char **result = malloc(sizeof(char*) * (count ? count : 1));
+    uint32_t i = 0;
+    if (list) {
+        ut_iter it = ut_ll_iter(list);
+        while (ut_iter_hasNext(&it)) {
+            result[i ++] = ut_iter_next(&it);
+        }
+    }
+    qsort(result, count, sizeof(char*), bake_string_ptr_compare);
+    *count_out = count;
+    return result;
+}
+
+static
+bool bake_dependency_condition_add(
+    bake_amalgamate_dependency_node *node,
+    const char *condition)
+{
+    if (!condition) {
+        if (node->unconditional) {
+            return false;
+        }
+        node->unconditional = true;
+        bake_attr_free_string_array(node->conditions);
+        node->conditions = NULL;
+        return true;
+    }
+
+    if (node->unconditional ||
+        bake_string_list_contains(node->conditions, condition))
+    {
+        return false;
+    }
+
+    if (!node->conditions) {
+        node->conditions = ut_ll_new();
+    }
+    ut_ll_append(node->conditions, ut_strdup(condition));
+    return true;
+}
+
+static
+int16_t bake_collect_amalgamate_dependency(
+    bake_config *config,
+    bake_project *owner,
+    ut_rb nodes,
+    const char *dependency,
+    const char *condition)
+{
+    bake_amalgamate_dependency_node *node = ut_rb_find(nodes, dependency);
+    bool is_new = false;
+    if (!node) {
+        node = ut_calloc(sizeof(bake_amalgamate_dependency_node));
+        node->id = ut_strdup(dependency);
+        node->dependencies = ut_ll_new();
+        ut_rb_set(nodes, node->id, node);
+        is_new = true;
+    }
+
+    bool condition_added = bake_dependency_condition_add(node, condition);
+    if (!is_new && !condition_added) {
+        return 0;
+    }
+
+    if (is_new) {
+        ut_locate_reset(dependency);
+        const char *path = ut_locate(dependency, NULL, UT_LOCATE_PROJECT);
+        if (!path) {
+            ut_throw(
+                "cannot amalgamate dependency '%s': project is unavailable",
+                dependency);
+            goto error;
+        }
+
+        bake_project *dep = bake_project_new(path, config);
+        if (!dep) {
+            ut_throw("failed to create project for dependency '%s'", dependency);
+            goto error;
+        }
+        if (dep->type != BAKE_PACKAGE) {
+            bake_project_free(dep);
+            ut_throw("cannot amalgamate dependency '%s': not a package",
+                dependency);
+            goto error;
+        }
+
+        ut_ll lists[2] = {dep->use, dep->use_private};
+        for (uint32_t l = 0; l < 2; l ++) {
+            uint32_t dep_count = 0;
+            char **deps = bake_sorted_string_list(lists[l], &dep_count);
+            for (uint32_t i = 0; i < dep_count; i ++) {
+                if (!bake_string_list_contains(node->dependencies, deps[i])) {
+                    ut_ll_append(node->dependencies, ut_strdup(deps[i]));
+                }
+            }
+            free(deps);
+        }
+
+        bake_import_dependency_config(config, owner, dep);
+        bake_project_free(dep);
+    }
+
+    uint32_t dep_count = 0;
+    char **deps = bake_sorted_string_list(node->dependencies, &dep_count);
+    for (uint32_t i = 0; i < dep_count; i ++) {
+        ut_try(bake_collect_amalgamate_dependency(
+            config, owner, nodes, deps[i],
+            node->unconditional ? NULL : condition), NULL);
+    }
+    free(deps);
+
+    return 0;
+error:
+    return -1;
+}
+
+static
+int16_t bake_order_amalgamate_dependency(
+    ut_rb nodes,
+    bake_amalgamate_dependency_node *node,
+    ut_ll ordered)
+{
+    if (node->visit == 2) {
+        return 0;
+    }
+    if (node->visit == 1) {
+        ut_throw("dependency cycle encountered while amalgamating '%s'",
+            node->id);
+        goto error;
+    }
+
+    node->visit = 1;
+    uint32_t dep_count = 0;
+    char **deps = bake_sorted_string_list(node->dependencies, &dep_count);
+    for (uint32_t i = 0; i < dep_count; i ++) {
+        bake_amalgamate_dependency_node *dep = ut_rb_find(nodes, deps[i]);
+        if (dep) {
+            ut_try(bake_order_amalgamate_dependency(nodes, dep, ordered), NULL);
+        }
+    }
+    free(deps);
+    node->visit = 2;
+    ut_ll_append(ordered, node);
+    return 0;
+error:
+    return -1;
+}
+
+static
+char* bake_amalgamate_dependency_condition(
+    bake_amalgamate_dependency_node *node)
+{
+    if (node->unconditional) {
+        return NULL;
+    }
+
+    uint32_t count = 0;
+    char **conditions = bake_sorted_string_list(node->conditions, &count);
+    if (count == 1) {
+        char *result = ut_strdup(conditions[0]);
+        free(conditions);
+        return result;
+    }
+
+    ut_strbuf result = UT_STRBUF_INIT;
+    for (uint32_t i = 0; i < count; i ++) {
+        if (i) {
+            ut_strbuf_appendstr(&result, " || ");
+        }
+        ut_strbuf_append(&result, "(%s)", conditions[i]);
+    }
+    free(conditions);
+    return ut_strbuf_get(&result);
+}
+
+static
+int16_t bake_prepare_amalgamate_config_dependencies(
+    bake_config *config,
+    bake_project *project,
+    bake_driver *amalg_driver,
+    bake_amalgamate_config *cfg,
+    uint32_t cfg_index,
+    const char *cache_path)
+{
+    if (!cfg->dependencies) {
+        return 0;
+    }
+
+    ut_rb nodes = ut_rb_new(rb_strcmp, NULL);
+
+    if (cfg->dependency_groups) {
+        ut_iter group_it = ut_ll_iter(cfg->dependency_groups);
+        while (ut_iter_hasNext(&group_it)) {
+            bake_amalgamate_dependency_group *group =
+                ut_iter_next(&group_it);
+            uint32_t root_count = 0;
+            char **roots = bake_sorted_string_list(group->use, &root_count);
+            for (uint32_t i = 0; i < root_count; i ++) {
+                ut_try(bake_collect_amalgamate_dependency(
+                    config, project, nodes, roots[i], group->when), NULL);
+            }
+            free(roots);
+        }
+    } else {
+        ut_ll lists[2] = {project->use, project->use_private};
+        for (uint32_t l = 0; l < 2; l ++) {
+            uint32_t root_count = 0;
+            char **roots = bake_sorted_string_list(lists[l], &root_count);
+            for (uint32_t i = 0; i < root_count; i ++) {
+                ut_try(bake_collect_amalgamate_dependency(
+                    config, project, nodes, roots[i], NULL), NULL);
+            }
+            free(roots);
+        }
+    }
+
+    ut_ll ordered = ut_ll_new();
+    ut_iter node_it = ut_rb_iter(nodes);
+    while (ut_iter_hasNext(&node_it)) {
+        bake_amalgamate_dependency_node *node = ut_iter_next(&node_it);
+        ut_try(bake_order_amalgamate_dependency(nodes, node, ordered), NULL);
+    }
+
+    cfg->dependency_packages = ut_ll_new();
+    char *cfg_cache = ut_asprintf(
+        "%s"UT_OS_PS"%u", cache_path, cfg_index);
+    ut_try(ut_mkdir(cfg_cache), NULL);
+
+    node_it = ut_ll_iter(ordered);
+    while (ut_iter_hasNext(&node_it)) {
+        bake_amalgamate_dependency_node *node = ut_iter_next(&node_it);
+        char *package_path = ut_asprintf(
+            "%s"UT_OS_PS"%s", cfg_cache, node->id);
+        ut_try(ut_mkdir(package_path), NULL);
+
+        ut_locate_reset(node->id);
+        const char *src_path = ut_locate(node->id, NULL, UT_LOCATE_DEVSRC);
+        if (!src_path) {
+            free(package_path);
+            ut_throw(
+                "cannot amalgamate dependency '%s': source is unavailable",
+                node->id);
+            goto error;
+        }
+
+        bake_project *dep = bake_project_new(src_path, config);
+        if (!dep) {
+            free(package_path);
+            ut_throw("failed to create project for dependency '%s'", node->id);
+            goto error;
+        }
+        ut_try(bake_generate_dependency_amalgamation(
+            config, dep, amalg_driver, package_path), NULL);
+        bake_project_free(dep);
+
+        bake_amalgamate_dependency *resolved =
+            ut_calloc(sizeof(bake_amalgamate_dependency));
+        resolved->id = ut_strdup(node->id);
+        resolved->condition = bake_amalgamate_dependency_condition(node);
+        resolved->path = package_path;
+        ut_ll_append(cfg->dependency_packages, resolved);
+    }
+
+    free(cfg_cache);
+    ut_ll_free(ordered);
+    node_it = ut_rb_iter(nodes);
+    while (ut_iter_hasNext(&node_it)) {
+        bake_amalgamate_dependency_node_free(ut_iter_next(&node_it));
+    }
+    ut_rb_free(nodes);
+    return 0;
+error:
+    return -1;
+}
+
+static
+int16_t bake_prepare_amalgamate_dependencies(
+    bake_config *config,
+    bake_project *project,
+    bake_driver *amalg_driver)
+{
+    char *cache_path = ut_asprintf(
+        "%s"UT_OS_PS"amalgamate-deps", project->cache_path);
+    uint32_t index = 0;
+    ut_iter cfg_it = ut_ll_iter(project->amalgamate_configs);
+    while (ut_iter_hasNext(&cfg_it)) {
+        bake_amalgamate_config *cfg = ut_iter_next(&cfg_it);
+        ut_try(bake_prepare_amalgamate_config_dependencies(
+            config, project, amalg_driver, cfg, index, cache_path), NULL);
+        index ++;
+    }
+    free(cache_path);
     return 0;
 error:
     return -1;
@@ -1597,10 +2189,10 @@ int16_t bake_check_dependency(
         }
     }
 
-    /* Copy dependency amalgamations when requested. Standalone projects use
-     * them as build sources; regular projects only use them while generating
-     * their amalgamated output. */
-    if (p->standalone || bake_project_amalgamate_dependencies(p)) {
+    /* Standalone projects use a legacy flat dependency source directory.
+     * Regular amalgamations are prepared per output after direct dependency
+     * validation, so their conditional closures remain isolated. */
+    if (p->standalone) {
         ut_try(copy_amalgamated_from_dep(
             config, p, amalg_driver, dependency, amalg_copied), NULL);
     }
@@ -1715,6 +2307,13 @@ int16_t bake_project_check_dependencies(
             }
             total_dependencies ++;
         }
+    }
+
+    if (!project->missing_dependencies && amalgamate_dependencies &&
+        !project->standalone)
+    {
+        ut_try(bake_prepare_amalgamate_dependencies(
+            config, project, amalg_driver), NULL);
     }
 
     if (project->artefact_outdated) {

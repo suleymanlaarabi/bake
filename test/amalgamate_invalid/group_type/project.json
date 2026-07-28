@@ -1,0 +1,9 @@
+{
+    "id": "invalid_amalgamate_group_type",
+    "type": "package",
+    "value": {
+        "amalgamate": [{
+            "dependencies": ["FLAG"]
+        }]
+    }
+}

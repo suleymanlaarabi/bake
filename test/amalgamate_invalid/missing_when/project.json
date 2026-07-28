@@ -1,0 +1,12 @@
+{
+    "id": "invalid_amalgamate_missing_when",
+    "type": "package",
+    "value": {
+        "use": ["amalgamate_dependency"],
+        "amalgamate": [{
+            "dependencies": [{
+                "use": ["amalgamate_dependency"]
+            }]
+        }]
+    }
+}

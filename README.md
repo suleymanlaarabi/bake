@@ -673,12 +673,46 @@ use | list(string) | List of dependencies using logical project ids. Dependencie
 use_private | list(string) | Same as "use", but dependencies are private, which means that header files will not be exposed to dependees of this project.
 use_runtime | list(string) | Specify dependencies that a project needs at runtime, but that are not used/linked with during build time.
 use-bundle | list(string) | Bundles to be used by project. If the bundles are also specified as a repository, bake will be able to automatically download & find dependencies in the specified bundles.
-amalgamate | bool or list(object) | Experimental. Generate amalgamated header and source file for the project. Array entries support `path`, `prefix`, `disable-flags`, and `dependencies`; setting `dependencies` to `true` embeds transitive `use` and `use_private` dependencies in the generated output.
+amalgamate | bool or list(object) | Experimental. Generate amalgamated header and source file for the project. Array entries support `path`, `prefix`, `disable-flags`, and `dependencies`. `dependencies` may be `false`, `true`, or a list of conditional `{ "when": expression, "use": [roots] }` groups.
 sources | list(string) | List of paths that contain source files. Default is `src`. The `$SOURCES` rule is substituted with this value.
 includes | list(string) | List of paths that contain include files.
 keep_binary | bool | Do not clean binary files when doing bake clean. When a binary for the target platform is present, bake will skip the project. To force a rebuild, a user has to explicitly use the `bake rebuild` command.
 
 The `cflags` attribute is specified inside the `lang.c` property. This is because `cflags` is a property specific to the C driver. For documentation on which properties are valid for which drivers, see the driver documentation.
+
+#### Conditional amalgamation dependencies
+
+Setting `dependencies` to `true` embeds the complete transitive closure of the
+project's `use` and `use_private` dependencies. A list can instead select direct
+dependency roots and preserve a preprocessor condition around each selected
+closure:
+
+```json
+"amalgamate": [
+    {
+        "path": "distr",
+        "dependencies": [
+            {
+                "when": "MY_LIBRARY_HAS_JSON",
+                "use": ["my_json_adapter"]
+            },
+            {
+                "when": "MY_LIBRARY_HAS_HTTP",
+                "use": ["my_http_adapter"]
+            }
+        ]
+    }
+]
+```
+
+Each `when` value is a non-empty, single-line C preprocessor expression. Bake
+does not evaluate it: the expression is written to the generated `.h` and `.c`
+files for the final user to select. Shared transitive packages are emitted once,
+with their conditions combined using `||`.
+
+This differs from Bake template conditions such as `${cfg debug}`. Template
+conditions are evaluated by Bake while reading `project.json`; `when` is
+preserved verbatim and evaluated later by the C or C++ preprocessor.
 
 #### Private dependencies
 When projects depend on other projects that require additional library paths or include paths, it may not be desirable to require having these properties propagate to dependees. For example, `bar` depends on `foo`, and `foo` requires adding an `include` path to the build configuration. Now, `helloworld` depends on `bar`, but it does not need to know about `foo`.

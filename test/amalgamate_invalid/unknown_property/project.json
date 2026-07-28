@@ -1,0 +1,14 @@
+{
+    "id": "invalid_amalgamate_unknown_property",
+    "type": "package",
+    "value": {
+        "use": ["amalgamate_dependency"],
+        "amalgamate": [{
+            "dependencies": [{
+                "when": "FLAG",
+                "use": ["amalgamate_dependency"],
+                "unless": "OTHER_FLAG"
+            }]
+        }]
+    }
+}

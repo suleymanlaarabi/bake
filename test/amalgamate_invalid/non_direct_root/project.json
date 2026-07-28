@@ -1,0 +1,13 @@
+{
+    "id": "invalid_amalgamate_non_direct_root",
+    "type": "package",
+    "value": {
+        "use": ["amalgamate_dependency"],
+        "amalgamate": [{
+            "dependencies": [{
+                "when": "FLAG",
+                "use": ["amalgamate_leaf"]
+            }]
+        }]
+    }
+}

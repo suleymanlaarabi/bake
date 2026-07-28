@@ -1,0 +1,9 @@
+{
+    "id": "invalid_amalgamate_dependencies_type",
+    "type": "package",
+    "value": {
+        "amalgamate": [{
+            "dependencies": "yes"
+        }]
+    }
+}

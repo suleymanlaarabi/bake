@@ -74,12 +74,30 @@ typedef struct bake_project_bundle {
     ut_rb refs;
 } bake_project_bundle;
 
+/* A conditional set of roots to embed in an amalgamation. */
+typedef struct bake_amalgamate_dependency_group {
+    char *when;             /* Verbatim, single-line preprocessor expression */
+    ut_ll use;              /* Direct project dependencies (list of char*) */
+} bake_amalgamate_dependency_group;
+
+/* A resolved package in an amalgamation dependency closure. */
+typedef struct bake_amalgamate_dependency {
+    char *id;               /* Package id */
+    char *condition;        /* Effective condition (NULL = unconditional) */
+    char *path;             /* Package-specific amalgamation cache directory */
+} bake_amalgamate_dependency;
+
 /* A single amalgamation configuration (new "amalgamate" array format) */
 typedef struct bake_amalgamate_config {
     char *path;             /* Output subdirectory (NULL = project/generate path) */
     char *prefix;           /* Output base name (NULL = project id) */
     ut_ll disable_flags;    /* Macro names to treat as undefined (list of char*) */
     bool dependencies;      /* Embed use/use_private dependencies in output */
+
+    /* Appended fields preserve compatibility with drivers built against the
+     * original amalgamation configuration. */
+    ut_ll dependency_groups;   /* bake_amalgamate_dependency_group* */
+    ut_ll dependency_packages; /* bake_amalgamate_dependency* (resolved) */
 } bake_amalgamate_config;
 
 struct bake_project {

@@ -14,30 +14,30 @@
  * dependencies will automatically show up in this file. Include bake_config.h
  * in your main project file. Do not edit! */
 
-#ifndef AMALGAMATE_PRIVATE_BAKE_CONFIG_H
-#define AMALGAMATE_PRIVATE_BAKE_CONFIG_H
+#ifndef AMALGAMATE_CONDITIONAL_BAKE_CONFIG_H
+#define AMALGAMATE_CONDITIONAL_BAKE_CONFIG_H
 
 /* Headers of public dependencies */
-/* No dependencies */
+#include <amalgamate_dependency.h>
 
 /* Headers of private dependencies */
-#ifdef amalgamate_private_EXPORTS
-#include <amalgamate_leaf.h>
+#ifdef amalgamate_conditional_EXPORTS
+#include <amalgamate_private.h>
 #endif
 
 /* Convenience macro for exporting symbols */
-#ifndef amalgamate_private_STATIC
-#if defined(amalgamate_private_EXPORTS) && (defined(_MSC_VER) || defined(__MINGW32__))
-  #define AMALGAMATE_PRIVATE_API __declspec(dllexport)
-#elif defined(amalgamate_private_EXPORTS)
-  #define AMALGAMATE_PRIVATE_API __attribute__((__visibility__("default")))
+#ifndef amalgamate_conditional_STATIC
+#if defined(amalgamate_conditional_EXPORTS) && (defined(_MSC_VER) || defined(__MINGW32__))
+  #define AMALGAMATE_CONDITIONAL_API __declspec(dllexport)
+#elif defined(amalgamate_conditional_EXPORTS)
+  #define AMALGAMATE_CONDITIONAL_API __attribute__((__visibility__("default")))
 #elif defined(_MSC_VER)
-  #define AMALGAMATE_PRIVATE_API __declspec(dllimport)
+  #define AMALGAMATE_CONDITIONAL_API __declspec(dllimport)
 #else
-  #define AMALGAMATE_PRIVATE_API
+  #define AMALGAMATE_CONDITIONAL_API
 #endif
 #else
-  #define AMALGAMATE_PRIVATE_API
+  #define AMALGAMATE_CONDITIONAL_API
 #endif
 
 #endif

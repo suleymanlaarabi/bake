@@ -51,6 +51,7 @@ jobs:
             -Iexamples/c/pkg_amalgamate_dependee/generated \
             -o /tmp/amalgamate-dependencies
           /tmp/amalgamate-dependencies
+          sh test/amalgamate.sh
 
   build-windows:
     timeout-minutes: 10
@@ -70,3 +71,8 @@ jobs:
       - name: build examples
         run: |
           ./bake examples --strict
+
+      - name: compile conditional amalgamation
+        shell: cmd
+        run: |
+          cl /nologo /std:c11 /c /DAMALGAMATE_WITH_PUBLIC /DAMALGAMATE_WITH_PRIVATE /Iexamples\c\pkg_amalgamate_conditional\generated examples\c\pkg_amalgamate_conditional\generated\amalgamate_conditional.c

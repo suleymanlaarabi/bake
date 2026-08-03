@@ -247,6 +247,41 @@ char* src_to_obj(
     return result;
 }
 
+/* A static package must be consumed without dllimport decorations. Propagate
+ * the static marker to every project that uses a package when --static is
+ * active. Applications remain dynamic artefacts, but their package headers
+ * still need these markers when they link static libraries. */
+static
+void add_static_dependency_flags(
+    bake_driver_api *driver,
+    bake_project *project)
+{
+    ut_ll lists[2] = {project->use, project->use_private};
+
+    for (uint32_t i = 0; i < 2; i ++) {
+        if (!lists[i]) {
+            continue;
+        }
+
+        ut_iter it = ut_ll_iter(lists[i]);
+        while (ut_iter_hasNext(&it)) {
+            const char *dependency = ut_iter_next(&it);
+            char *value = ut_asprintf("-D%s_STATIC", dependency);
+            char *ptr;
+
+            for (ptr = value; *ptr; ptr ++) {
+                if (*ptr == '.') {
+                    *ptr = '_';
+                }
+            }
+
+            driver->set_attr_array("cflags", value);
+            driver->set_attr_array("cxxflags", value);
+            free(value);
+        }
+    }
+}
+
 /* Initialize project defaults */
 static
 void init(
@@ -269,7 +304,11 @@ void init(
         }
     }
 
-    if (!driver->get_attr("static")) {
+    /* --static selects static package artefacts. Applications must remain
+     * executables so they can link against those packages and run. */
+    if (config->static_lib && project->type == BAKE_PACKAGE) {
+        driver->set_attr_bool("static", true);
+    } else if (!driver->get_attr("static")) {
         driver->set_attr_bool("static", false);
     }
     if (driver->get_attr("static")->is.boolean) {
@@ -277,6 +316,10 @@ void init(
         driver->set_attr_array("cflags", value);
         driver->set_attr_array("cxxflags", value);
         free(value);
+    }
+
+    if (config->static_lib) {
+        add_static_dependency_flags(driver, project);
     }
 
     if (!driver->get_attr("export-symbols")) {

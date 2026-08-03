@@ -261,17 +261,29 @@ ut_ll wait_for_changes(
 
 static
 int build_project(
+    bake_config *config,
     const char *path)
 {
     int8_t procResult = 0;
-
-    /* Build */
-    ut_proc pid = ut_proc_run(BAKE_EXEC, (const char*[]){
+    const char *args[7] = {
         BAKE_EXEC,
         (char*)path,
         "-r",
-         NULL
-    });
+        NULL,
+        NULL,
+        NULL
+    };
+    int arg_count = 3;
+
+    if (config->static_lib) {
+        args[arg_count++] = "--static";
+    }
+    args[arg_count++] = "--cfg";
+    args[arg_count++] = config->configuration;
+    args[arg_count] = NULL;
+
+    /* Build */
+    ut_proc pid = ut_proc_run(BAKE_EXEC, args);
 
     if (!pid) {
         ut_throw("failed to invoke bake %s -r", path);
@@ -328,6 +340,7 @@ ut_proc run_exec(
 
 static
 int16_t run_interactive(
+    bake_config *config,
     const char *project_dir,
     const char *app_bin,
     const char *app_id,
@@ -347,7 +360,7 @@ int16_t run_interactive(
             }
 
             /* Build the project */
-            build_project(project_dir);
+            build_project(config, project_dir);
             rebuild++;
         }
 
@@ -612,7 +625,7 @@ int bake_run(
 
         if (interactive) {
             /* Run process & monitor source for changes */
-            if (run_interactive(project_dir, app_bin, app_id, prefix, argc, argv)) {
+            if (run_interactive(config, project_dir, app_bin, app_id, prefix, argc, argv)) {
                 goto error;
             }
         } else {
@@ -621,7 +634,7 @@ int bake_run(
             ut_trace("starting process '%s'", app_bin);
 
             if (project_dir) {
-                ut_try( build_project("."), "build failed, cannot run");
+                ut_try( build_project(config, "."), "build failed, cannot run");
             }
 
             if (argc) {

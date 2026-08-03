@@ -2538,12 +2538,21 @@ error:
     return NULL;
 }
 
-/* Add dependency to project */
+/* Add a dependency and, for static links, its transitive dependencies. A
+ * static archive does not carry the libraries it was built from, so those
+ * libraries must be present on the final link command as well. */
 static
-int16_t bake_project_add_dependency(
+int16_t bake_project_add_dependency_recursive(
     bake_project *p,
-    const char *dep)
+    const char *dep,
+    bake_config *config,
+    ut_ll visited)
 {
+    if (bake_string_list_contains(visited, dep)) {
+        return 0;
+    }
+    ut_ll_append(visited, ut_strdup(dep));
+
    /* Reset locate cache. It is possible that this dependency was looked up
     * before when it did not exist yet, but since then has been created (which
     * would have to be through a code generation process). */
@@ -2558,6 +2567,12 @@ int16_t bake_project_add_dependency(
     }
 
     const char *lib = ut_locate(dep, NULL, UT_LOCATE_LIB);
+    if (!lib) {
+        /* A --static build installs only the static artefact. Keep logical
+         * dependency names in the link list; the language driver will select
+         * the matching archive from the target library path. */
+        lib = ut_locate(dep, NULL, UT_LOCATE_STATIC);
+    }
     if (lib) {
         char *dep_lib = ut_strdup(dep);
         char *ptr, ch;
@@ -2568,6 +2583,34 @@ int16_t bake_project_add_dependency(
         }
 
         ut_ll_append(p->link, dep_lib);
+
+        /* A dependency project describes the libraries required by its
+         * static archive. Add those after the parent so archive resolution
+         * works with the usual left-to-right linker semantics. */
+        const char *path = ut_locate(dep, NULL, UT_LOCATE_PROJECT);
+        if (path) {
+            bake_project *dependency = bake_project_new(path, config);
+            if (!dependency) {
+                ut_throw("failed to load dependency project '%s'", dep);
+                goto error;
+            }
+
+            ut_ll lists[2] = {dependency->use, dependency->use_private};
+            for (uint32_t i = 0; i < 2; i ++) {
+                ut_iter it = ut_ll_iter(lists[i]);
+                while (ut_iter_hasNext(&it)) {
+                    const char *dep_of_dep = ut_iter_next(&it);
+                    if (bake_project_add_dependency_recursive(
+                        p, dep_of_dep, config, visited))
+                    {
+                        bake_project_free(dependency);
+                        goto error;
+                    }
+                }
+            }
+
+            bake_project_free(dependency);
+        }
     } else {
         /* A dependency may not have a library that can be linked, but could
          * only contain build instructions */
@@ -2579,16 +2622,30 @@ error:
     return -1;
 }
 
+/* Add dependency to project */
+static
+int16_t bake_project_add_dependency(
+    bake_project *p,
+    const char *dep,
+    bake_config *config,
+    ut_ll visited)
+{
+    return bake_project_add_dependency_recursive(p, dep, config, visited);
+}
+
 /* Add dependencies to project */
 static
 int16_t bake_project_add_dependencies(
+    bake_config *config,
     bake_project *p)
 {
     bool error = false;
+    ut_ll visited = ut_ll_new();
 
     if (p->standalone) {
         /* If project is importing amalgamated sources from dependencies, don't
          * link with dependency libraries. */
+        ut_ll_free(visited);
         return 0;
     }
 
@@ -2597,7 +2654,7 @@ int16_t bake_project_add_dependencies(
         ut_iter it = ut_ll_iter(p->use);
         while (ut_iter_hasNext(&it)) {
             char *dep = ut_iter_next(&it);
-            if (bake_project_add_dependency(p, dep)) {
+            if (bake_project_add_dependency(p, dep, config, visited)) {
                 error = true;
             }
         }
@@ -2608,11 +2665,17 @@ int16_t bake_project_add_dependencies(
         ut_iter it = ut_ll_iter(p->use_private);
         while (ut_iter_hasNext(&it)) {
             char *dep = ut_iter_next(&it);
-            if (bake_project_add_dependency(p, dep)) {
+            if (bake_project_add_dependency(p, dep, config, visited)) {
                 error = true;
             }
         }
     }
+
+    ut_iter it = ut_ll_iter(visited);
+    while (ut_iter_hasNext(&it)) {
+        free(ut_iter_next(&it));
+    }
+    ut_ll_free(visited);
 
     return error == false ? 0 : -1;
 }
@@ -2702,7 +2765,7 @@ int16_t bake_project_build(
     }
 
     /* Add use dependencies to the link attribute */
-    if (bake_project_add_dependencies(project)) {
+    if (bake_project_add_dependencies(config, project)) {
         goto error;
     }
 

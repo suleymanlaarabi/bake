@@ -23,6 +23,27 @@
 
 #include <bake.h>
 
+/* MSVC currently supports C17 and C++20 as its highest language modes. Keep
+ * project manifests free to describe newer standards while ensuring the
+ * Windows driver never emits unsupported /std switches. */
+static
+const char *msvc_c_standard(const char *standard)
+{
+    if (!strcmp(standard, "c23") || !strcmp(standard, "gnu23")) {
+        return "c17";
+    }
+    return standard;
+}
+
+static
+const char *msvc_cpp_standard(const char *standard)
+{
+    if (!strcmp(standard, "c++23")) {
+        return "c++20";
+    }
+    return standard;
+}
+
 static
 void msvc_add_sanitizers(
     bake_config *config,
@@ -56,7 +77,7 @@ void msvc_add_flags(
         }
 
         ut_strbuf_append(cmd, " /std:%s ",
-            driver->get_attr_string("c-standard"));
+            msvc_c_standard(driver->get_attr_string("c-standard")));
     } else {
         /* CXXFLAGS for c4cpp projects */
         bake_attr *flags_attr = driver->get_attr("cxxflags");
@@ -69,7 +90,7 @@ void msvc_add_flags(
         }
 
         ut_strbuf_append(cmd, " /std:%s",
-            driver->get_attr_string("cpp-standard"));
+            msvc_cpp_standard(driver->get_attr_string("cpp-standard")));
     }
 
     /* Add defines */
@@ -394,7 +415,7 @@ void msvc_link_static_binary(
     char *target)
 {
     ut_strbuf cmd = UT_STRBUF_INIT;
-    ut_strbuf_append(&cmd, "ar rcs %s %s", target, source);
+    ut_strbuf_append(&cmd, "lib /nologo /OUT:\"%s\" %s", target, source);
     char *cmdstr = ut_strbuf_get(&cmd);
     driver->exec(cmdstr);
     free(cmdstr);
@@ -543,4 +564,3 @@ bake_compiler_interface msvc_get() {
 
     return result;
 }
-

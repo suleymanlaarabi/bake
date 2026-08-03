@@ -1480,6 +1480,13 @@ int main(int argc, const char *argv[]) {
     ut_try (bake_config_load(&config, env, load_bundles), NULL);
     ut_log_pop();
 
+    /* Propagate the command-line static-linking request to language drivers.
+     * Without this, --static was parsed but never affected the artefact
+     * selected by a project or any of its dependencies. */
+    if (static_lib) {
+        config.static_lib = true;
+    }
+
     if (strict) {
         config.strict = true;
     }

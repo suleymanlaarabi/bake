@@ -15,11 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Unpack bakers source
-        shell: bash
+        shell: python
         run: |
-          cat .ci/bakers-port-0* | base64 --decode > port.tar.gz
-          echo '02bef2cffe36afc44f69232f8ec95f2c9fe8e1aa81dc42026812ccb6be2e98fb  port.tar.gz' | sha256sum -c -
-          tar -xzf port.tar.gz
+          import base64, hashlib, pathlib, tarfile
+          chunks = sorted(pathlib.Path('.ci').glob('bakers-port-0*'))
+          data = base64.b64decode(''.join(p.read_text() for p in chunks))
+          digest = hashlib.sha256(data).hexdigest()
+          assert digest == '02bef2cffe36afc44f69232f8ec95f2c9fe8e1aa81dc42026812ccb6be2e98fb', digest
+          pathlib.Path('port.tar.gz').write_bytes(data)
+          tarfile.open('port.tar.gz', 'r:gz').extractall('.')
       - name: Install Rust 1.98.1
         shell: bash
         run: |
@@ -45,17 +49,21 @@ jobs:
     needs: rust
     runs-on: ubuntu-24.04
     env:
-      BAKE_HOME: ${{ runner.temp }}/bake-home
+      BAKE_HOME: /tmp/bakers-bake-home
       CC: gcc-14
       CXX: g++-14
     steps:
       - uses: actions/checkout@v4
       - name: Unpack bakers source
-        shell: bash
+        shell: python
         run: |
-          cat .ci/bakers-port-0* | base64 --decode > port.tar.gz
-          echo '02bef2cffe36afc44f69232f8ec95f2c9fe8e1aa81dc42026812ccb6be2e98fb  port.tar.gz' | sha256sum -c -
-          tar -xzf port.tar.gz
+          import base64, hashlib, pathlib, tarfile
+          chunks = sorted(pathlib.Path('.ci').glob('bakers-port-0*'))
+          data = base64.b64decode(''.join(p.read_text() for p in chunks))
+          digest = hashlib.sha256(data).hexdigest()
+          assert digest == '02bef2cffe36afc44f69232f8ec95f2c9fe8e1aa81dc42026812ccb6be2e98fb', digest
+          pathlib.Path('port.tar.gz').write_bytes(data)
+          tarfile.open('port.tar.gz', 'r:gz').extractall('.')
       - name: Install Rust 1.98.1
         shell: bash
         run: |

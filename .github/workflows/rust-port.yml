@@ -150,6 +150,18 @@ jobs:
           if needle not in s:
               raise SystemExit('dependency library block not found')
           p.write_text(s.replace(needle, replacement))
+
+          p = Path('bake-rust-port/tests/integration.rs')
+          s = p.read_text()
+          s = s.replace(
+              'let exe=root.join("bin/debug").join(if cfg!(windows){"app.exe"}else{root.file_name().unwrap().to_str().unwrap()});',
+              'let base = root.file_name().unwrap().to_string_lossy();\n    let exe_name = if cfg!(windows) { format!("{base}.exe") } else { base.into_owned() };\n    let exe=root.join("bin/debug").join(exe_name);'
+          )
+          s = s.replace(
+              'fs::write(lib.join("src/main.c"),"int answer(void){return 42;}\\n").unwrap();',
+              'fs::write(lib.join("src/main.c"),"#ifdef _WIN32\\n__declspec(dllexport)\\n#endif\\nint answer(void){return 42;}\\n").unwrap();'
+          )
+          p.write_text(s)
       - name: install Rust 1.98.1
         shell: bash
         run: |

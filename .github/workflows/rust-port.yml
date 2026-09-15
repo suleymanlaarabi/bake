@@ -149,7 +149,56 @@ jobs:
           };'''
           if needle not in s:
               raise SystemExit('dependency library block not found')
-          p.write_text(s.replace(needle, replacement))
+          s = s.replace(needle, replacement)
+          needle = '    if relink { link(project, &objects, &target, projects, idx, opts)?; }\n'
+          if needle not in s:
+              raise SystemExit('relink block not found')
+          s = s.replace(needle, needle + '    sync_runtime_libraries(project, projects, idx, opts)?;\n', 1)
+          marker = '\npub fn clean(projects: &[Project], cfg: &str) -> Result<()> {'
+          helper = '''
+          fn sync_runtime_libraries(project: &Project, projects: &[Project], idx: &BTreeMap<String, usize>, opts: &BuildOptions) -> Result<()> {
+              if !cfg!(windows) || !matches!(project.kind, ProjectKind::Application | ProjectKind::Tool) {
+                  return Ok(());
+              }
+
+              let mut pending = project.cfg.dependencies().cloned().collect::<Vec<_>>();
+              let mut seen = std::collections::BTreeSet::new();
+              while let Some(dep) = pending.pop() {
+                  if !seen.insert(dep.clone()) {
+                      continue;
+                  }
+                  let Some(&i) = idx.get(&dep) else {
+                      continue;
+                  };
+                  let dependency = &projects[i];
+                  pending.extend(dependency.cfg.dependencies().cloned());
+                  if dependency.kind != ProjectKind::Package
+                      || opts.static_lib
+                      || dependency.cfg.lang().static_output
+                  {
+                      continue;
+                  }
+                  let dll = dependency.artefact_path(&opts.cfg);
+                  if dll.exists() {
+                      let name = dll.file_name().context("runtime library has no filename")?;
+                      fs::copy(&dll, project.output_dir(&opts.cfg).join(name))
+                          .with_context(|| format!("copying runtime library {}", dll.display()))?;
+                  }
+              }
+              Ok(())
+          }
+          '''
+          if marker not in s:
+              raise SystemExit('clean marker not found')
+          p.write_text(s.replace(marker, '\n' + helper + marker, 1))
+
+          p = Path('bake-rust-port/src/main.rs')
+          s = p.read_text()
+          old = '    let code = if kind == "package" { "int bake_generated_symbol(void) { return 0; }\\n" } else { "#include <stdio.h>\\nint main(void) { puts(\\"Hello from bake\\"); return 0; }\\n" };'
+          new = '    let code = if kind == "package" { "#ifdef _WIN32\\n__declspec(dllexport)\\n#endif\\nint bake_generated_symbol(void) { return 0; }\\n" } else { "#include <stdio.h>\\nint main(void) { puts(\\"Hello from bake\\"); return 0; }\\n" };'
+          if old not in s:
+              raise SystemExit('package template block not found')
+          p.write_text(s.replace(old, new, 1))
 
           p = Path('bake-rust-port/tests/integration.rs')
           s = p.read_text()
@@ -161,7 +210,15 @@ jobs:
               'fs::write(lib.join("src/main.c"),"int answer(void){return 42;}\\n").unwrap();',
               'fs::write(lib.join("src/main.c"),"#ifdef _WIN32\\n__declspec(dllexport)\\n#endif\\nint answer(void){return 42;}\\n").unwrap();'
           )
-          p.write_text(s)
+          needle = '    let bin=env!("CARGO_BIN_EXE_bake"); let s=Command::new(bin).env("BAKE_HOME",&home).current_dir(&root).arg("build").status().unwrap(); assert!(s.success());\n}'
+          replacement = '''    let bin=env!("CARGO_BIN_EXE_bake"); let s=Command::new(bin).env("BAKE_HOME",&home).current_dir(&root).arg("build").status().unwrap(); assert!(s.success());
+              let app_name = if cfg!(windows) { "app.exe" } else { "app" };
+              let s = Command::new(app.join("bin/debug").join(app_name)).status().unwrap();
+              assert!(s.success());
+          }'''
+          if needle not in s:
+              raise SystemExit('dependency runtime test block not found')
+          p.write_text(s.replace(needle, replacement, 1))
       - name: install Rust 1.98.1
         shell: bash
         run: |

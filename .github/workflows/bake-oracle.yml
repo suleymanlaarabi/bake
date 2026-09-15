@@ -1,0 +1,30 @@
+name: bake-oracle
+
+on:
+  push:
+    branches: ['chatgpt/rust-port-validation']
+  workflow_dispatch:
+
+jobs:
+  siecs-original-bake:
+    runs-on: ubuntu-24.04
+    env:
+      BAKE_HOME: /tmp/original-bake-home
+      CC: gcc-14
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build original Bake
+        run: make -C build-Linux
+      - name: Setup original Bake
+        run: ./bake setup
+      - name: Clone siecs
+        run: git clone https://github.com/suleymanlaarabi/siecs.git
+      - name: Rebuild debug recursively
+        working-directory: siecs
+        run: ../bake rebuild . -r --cfg debug
+      - name: Inspect debug environment
+        run: find "$BAKE_HOME" -maxdepth 4 -type f -o -type l | sort
+      - name: Run Bake test
+        working-directory: siecs
+        run: ../bake test --debug

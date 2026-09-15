@@ -17,14 +17,19 @@ jobs:
       - name: Build original Bake
         run: make -C build-Linux
       - name: Setup original Bake
-        run: ./bake setup
+        run: |
+          mkdir -p "$BAKE_HOME"
+          ./bake setup --local
       - name: Clone siecs
         run: git clone https://github.com/suleymanlaarabi/siecs.git
       - name: Rebuild debug recursively
         working-directory: siecs
         run: ../bake rebuild . -r --cfg debug
       - name: Inspect debug environment
-        run: find "$BAKE_HOME" -maxdepth 4 -type f -o -type l | sort
+        run: find "$BAKE_HOME" -maxdepth 4 \( -type f -o -type l \) | sort
       - name: Run Bake test
         working-directory: siecs
         run: ../bake test --debug
+      - name: Inspect test environment
+        if: always()
+        run: find "$BAKE_HOME" -maxdepth 4 \( -type f -o -type l \) | sort

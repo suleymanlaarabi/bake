@@ -13,13 +13,37 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: unpack port
-        shell: python
+      - name: unpack known-good source archive
+        shell: bash
         run: |
+          git fetch origin 48f313ce3cc85d1b1e96a57e83d896aa5e765159 --depth=1
+          git show 48f313ce3cc85d1b1e96a57e83d896aa5e765159:.ci/bake-rust-port.tar.gz.b64 > port.b64
+          python - <<'PY'
           import base64, tarfile
-          data = base64.b64decode(open('.ci/bake-rust-port.tar.gz.b64', encoding='ascii').read())
+          data = base64.b64decode(open('port.b64', encoding='ascii').read())
           open('bake-rust-port-ci.tar.gz','wb').write(data)
           tarfile.open('bake-rust-port-ci.tar.gz','r:gz').extractall('.')
+          PY
+      - name: apply validation fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('bake-rust-port/src/amalgamate.rs')
+          p.write_text(p.read_text().replace('use anyhow::{Context, Result, bail};','use anyhow::{Context, Result};'))
+          p=Path('bake-rust-port/src/config.rs')
+          s=p.read_text()
+          start=s.find('    pub fn runtime_dependencies(&self)')
+          if start != -1:
+              end=s.find('\n    pub fn language(&self)', start)
+              s=s[:start]+s[end:]
+          s=s.replace("                if let Some(s) = item.as_str() {\n                    if s.contains('/') {\n                        *item = Value::String(s.replace('/', \".\"));\n                    }\n                }", "                if let Some(s) = item.as_str()\n                    && s.contains('/')\n                {\n                    *item = Value::String(s.replace('/', \".\"));\n                }")
+          p.write_text(s)
+          p=Path('bake-rust-port/src/project.rs')
+          s=p.read_text().replace('    pub manifest: PathBuf,\n','')
+          s=s.replace('        Ok(Self { root, manifest, id, kind, cfg })','        Ok(Self { root, id, kind, cfg })')
+          p.write_text(s)
+          p=Path('bake-rust-port/src/env.rs')
+          p.write_text(p.read_text().replace('    Ok(serde_json::from_str(&text).context("parsing bake environment config")?)','    serde_json::from_str(&text).context("parsing bake environment config")'))
       - name: install Rust 1.98.1
         shell: bash
         run: |

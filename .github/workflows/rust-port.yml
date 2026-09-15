@@ -38,7 +38,6 @@ jobs:
           if start != -1:
               end = s.find('\n    pub fn language(&self)', start)
               s = s[:start] + s[end:]
-
           lines = s.splitlines()
           out = []
           i = 0
@@ -80,17 +79,10 @@ jobs:
 
           p = Path('bake-rust-port/src/build.rs')
           s = p.read_text()
-          old = '''    if msvc {
-              cmd.arg("/nologo"); cmd.args(objects);
-              if project.kind == ProjectKind::Package { cmd.arg("/LD"); }
-              cmd.arg(format!("/Fe{}", target.display()));
-              for d in dependency_libs(project, projects, idx, opts) { cmd.arg(d); }
-              for p in &project.cfg.lang().libpath { cmd.arg(format!("/link /LIBPATH:{p}")); }
-              for l in &project.cfg.lang().lib { cmd.arg(format!("{l}.lib")); }
-              for l in &project.cfg.lang().link { cmd.arg(l); }
-              for f in &project.cfg.lang().ldflags { cmd.arg(f); }
-          } else {'''
-          new = '''    if msvc {
+          link_fn = s.index('fn link(')
+          block_start = s.index('    if msvc {', link_fn)
+          block_else = s.index('    } else {', block_start) + len('    } else {')
+          new_block = '''    if msvc {
               cmd.arg("/nologo");
               cmd.args(objects);
               if project.kind == ProjectKind::Package {
@@ -117,18 +109,16 @@ jobs:
                   cmd.arg(f);
               }
           } else {'''
-          if old not in s:
-              raise SystemExit('MSVC link block not found')
-          s = s.replace(old, new)
-          old = '''        } else { projects[i].artefact_path(&opts.cfg) };'''
-          new = '''        } else if cfg!(windows) {
+          s = s[:block_start] + new_block + s[block_else:]
+          needle = '        } else { projects[i].artefact_path(&opts.cfg) };'
+          replacement = '''        } else if cfg!(windows) {
               projects[i].artefact_path(&opts.cfg).with_extension("lib")
           } else {
               projects[i].artefact_path(&opts.cfg)
           };'''
-          if old not in s:
+          if needle not in s:
               raise SystemExit('dependency library block not found')
-          p.write_text(s.replace(old, new))
+          p.write_text(s.replace(needle, replacement))
       - name: install Rust 1.98.1
         shell: bash
         run: |

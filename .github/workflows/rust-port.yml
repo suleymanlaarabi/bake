@@ -1,11 +1,12 @@
 name: rust-port
+
 on:
   push:
     branches: ['chatgpt/rust-port-validation']
   workflow_dispatch:
 
 jobs:
-  test:
+  rust:
     strategy:
       fail-fast: false
       matrix:
@@ -13,229 +14,66 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: unpack known-good source archive
+      - name: Unpack bakers source
         shell: bash
         run: |
-          git fetch origin 48f313ce3cc85d1b1e96a57e83d896aa5e765159 --depth=1
-          git show 48f313ce3cc85d1b1e96a57e83d896aa5e765159:.ci/bake-rust-port.tar.gz.b64 > port.b64
-          python - <<'PY'
-          import base64, tarfile
-          data = base64.b64decode(open('port.b64', encoding='ascii').read())
-          open('bake-rust-port-ci.tar.gz','wb').write(data)
-          tarfile.open('bake-rust-port-ci.tar.gz','r:gz').extractall('.')
-          PY
-      - name: apply validation fixes
-        shell: python
-        run: |
-          from pathlib import Path
-
-          p = Path('bake-rust-port/src/amalgamate.rs')
-          p.write_text(p.read_text().replace('use anyhow::{Context, Result, bail};', 'use anyhow::{Context, Result};'))
-
-          p = Path('bake-rust-port/src/config.rs')
-          s = p.read_text()
-          start = s.find('    pub fn runtime_dependencies(&self)')
-          if start != -1:
-              end = s.find('\n    pub fn language(&self)', start)
-              s = s[:start] + s[end:]
-          lines = s.splitlines()
-          out = []
-          i = 0
-          while i < len(lines):
-              line = lines[i]
-              if 'if let Some(s) = item.as_str() {' in line:
-                  indent = line[:len(line) - len(line.lstrip())]
-                  if i + 2 < len(lines) and "if s.contains('/') { *item = Value::String(s.replace('/', \".\")); }" in lines[i + 1]:
-                      out.extend([
-                          f'{indent}if let Some(s) = item.as_str()',
-                          f"{indent}    && s.contains('/')",
-                          f'{indent}{{',
-                          f'{indent}    *item = Value::String(s.replace(\'/\', \".\"));',
-                          f'{indent}}}',
-                      ])
-                      i += 3
-                      continue
-                  if i + 4 < len(lines) and "if s.contains('/') {" in lines[i + 1] and "*item = Value::String(s.replace('/', \".\"));" in lines[i + 2]:
-                      out.extend([
-                          f'{indent}if let Some(s) = item.as_str()',
-                          f"{indent}    && s.contains('/')",
-                          f'{indent}{{',
-                          f'{indent}    *item = Value::String(s.replace(\'/\', \".\"));',
-                          f'{indent}}}',
-                      ])
-                      i += 5
-                      continue
-              out.append(line)
-              i += 1
-          p.write_text('\n'.join(out) + '\n')
-
-          p = Path('bake-rust-port/src/project.rs')
-          s = p.read_text().replace('    pub manifest: PathBuf,\n', '')
-          s = s.replace('        Ok(Self { root, manifest, id, kind, cfg })', '        Ok(Self { root, id, kind, cfg })')
-          load_fn = s.index('    pub fn load(')
-          manifest_start = s.index('        let manifest = ', load_fn)
-          root_start = s.index('        let root = ', manifest_start)
-          root_end = s.index('\n', root_start)
-          replacement = '''        let manifest = normalize_path(
-              manifest
-                  .as_ref()
-                  .canonicalize()
-                  .with_context(|| format!("canonicalizing {}", manifest.as_ref().display()))?,
-          );
-          let root = manifest.parent().context("project.json has no parent")?.to_path_buf();
-          '''
-          s = s[:manifest_start] + replacement + s[root_end + 1:]
-          marker = '\nfn not_ignored(e: &DirEntry) -> bool {'
-          helper = '''
-          fn normalize_path(path: PathBuf) -> PathBuf {
-              #[cfg(windows)]
-              {
-                  let text = path.to_string_lossy();
-                  if let Some(rest) = text.strip_prefix(r"\\\\?\\UNC\\") {
-                      return PathBuf::from(format!(r"\\\\{rest}"));
-                  }
-                  if let Some(rest) = text.strip_prefix(r"\\\\?\\") {
-                      return PathBuf::from(rest);
-                  }
-              }
-              path
-          }
-          '''
-          if marker not in s:
-              raise SystemExit('project helper marker not found')
-          p.write_text(s.replace(marker, '\n' + helper + marker, 1))
-
-          p = Path('bake-rust-port/src/env.rs')
-          p.write_text(p.read_text().replace('    Ok(serde_json::from_str(&text).context("parsing bake environment config")?)', '    serde_json::from_str(&text).context("parsing bake environment config")'))
-
-          p = Path('bake-rust-port/src/build.rs')
-          s = p.read_text()
-          link_fn = s.index('fn link(')
-          block_start = s.index('    if msvc {', link_fn)
-          block_else = s.index('    } else {', block_start) + len('    } else {')
-          new_block = '''    if msvc {
-              cmd.arg("/nologo");
-              cmd.args(objects);
-              if project.kind == ProjectKind::Package {
-                  cmd.arg("/LD");
-              }
-              cmd.arg(format!("/Fe{}", target.display()));
-              for d in dependency_libs(project, projects, idx, opts) {
-                  cmd.arg(d);
-              }
-              for l in &project.cfg.lang().lib {
-                  cmd.arg(format!("{l}.lib"));
-              }
-              for l in &project.cfg.lang().link {
-                  cmd.arg(l);
-              }
-              cmd.arg("/link");
-              if project.kind == ProjectKind::Package {
-                  cmd.arg(format!("/IMPLIB:{}", target.with_extension("lib").display()));
-              }
-              for p in &project.cfg.lang().libpath {
-                  cmd.arg(format!("/LIBPATH:{p}"));
-              }
-              for f in &project.cfg.lang().ldflags {
-                  cmd.arg(f);
-              }
-          } else {'''
-          s = s[:block_start] + new_block + s[block_else:]
-          needle = '        } else { projects[i].artefact_path(&opts.cfg) };'
-          replacement = '''        } else if cfg!(windows) {
-              projects[i].artefact_path(&opts.cfg).with_extension("lib")
-          } else {
-              projects[i].artefact_path(&opts.cfg)
-          };'''
-          if needle not in s:
-              raise SystemExit('dependency library block not found')
-          s = s.replace(needle, replacement)
-          needle = '    if relink { link(project, &objects, &target, projects, idx, opts)?; }\n'
-          if needle not in s:
-              raise SystemExit('relink block not found')
-          s = s.replace(needle, needle + '    sync_runtime_libraries(project, projects, idx, opts)?;\n', 1)
-          marker = '\npub fn clean(projects: &[Project], cfg: &str) -> Result<()> {'
-          helper = '''
-          fn sync_runtime_libraries(project: &Project, projects: &[Project], idx: &BTreeMap<String, usize>, opts: &BuildOptions) -> Result<()> {
-              if !cfg!(windows) || !matches!(project.kind, ProjectKind::Application | ProjectKind::Tool) {
-                  return Ok(());
-              }
-
-              let mut pending = project.cfg.dependencies().cloned().collect::<Vec<_>>();
-              let mut seen = std::collections::BTreeSet::new();
-              while let Some(dep) = pending.pop() {
-                  if !seen.insert(dep.clone()) {
-                      continue;
-                  }
-                  let Some(&i) = idx.get(&dep) else {
-                      continue;
-                  };
-                  let dependency = &projects[i];
-                  pending.extend(dependency.cfg.dependencies().cloned());
-                  if dependency.kind != ProjectKind::Package
-                      || opts.static_lib
-                      || dependency.cfg.lang().static_output
-                  {
-                      continue;
-                  }
-                  let dll = dependency.artefact_path(&opts.cfg);
-                  if dll.exists() {
-                      let name = dll.file_name().context("runtime library has no filename")?;
-                      fs::copy(&dll, project.output_dir(&opts.cfg).join(name))
-                          .with_context(|| format!("copying runtime library {}", dll.display()))?;
-                  }
-              }
-              Ok(())
-          }
-          '''
-          if marker not in s:
-              raise SystemExit('clean marker not found')
-          p.write_text(s.replace(marker, '\n' + helper + marker, 1))
-
-          p = Path('bake-rust-port/src/main.rs')
-          s = p.read_text()
-          old = '    let code = if kind == "package" { "int bake_generated_symbol(void) { return 0; }\\n" } else { "#include <stdio.h>\\nint main(void) { puts(\\"Hello from bake\\"); return 0; }\\n" };'
-          new = '    let code = if kind == "package" { "#ifdef _WIN32\\n__declspec(dllexport)\\n#endif\\nint bake_generated_symbol(void) { return 0; }\\n" } else { "#include <stdio.h>\\nint main(void) { puts(\\"Hello from bake\\"); return 0; }\\n" };'
-          if old not in s:
-              raise SystemExit('package template block not found')
-          p.write_text(s.replace(old, new, 1))
-
-          p = Path('bake-rust-port/tests/integration.rs')
-          s = p.read_text()
-          s = s.replace(
-              'let exe=root.join("bin/debug").join(if cfg!(windows){"app.exe"}else{root.file_name().unwrap().to_str().unwrap()});',
-              'let base = root.file_name().unwrap().to_string_lossy();\n    let exe_name = if cfg!(windows) { format!("{base}.exe") } else { base.into_owned() };\n    let exe=root.join("bin/debug").join(exe_name);'
-          )
-          s = s.replace(
-              'fs::write(lib.join("src/main.c"),"int answer(void){return 42;}\\n").unwrap();',
-              'fs::write(lib.join("src/main.c"),"#ifdef _WIN32\\n__declspec(dllexport)\\n#endif\\nint answer(void){return 42;}\\n").unwrap();'
-          )
-          needle = '    let bin=env!("CARGO_BIN_EXE_bake"); let s=Command::new(bin).env("BAKE_HOME",&home).current_dir(&root).arg("build").status().unwrap(); assert!(s.success());\n}'
-          replacement = '''    let bin=env!("CARGO_BIN_EXE_bake"); let s=Command::new(bin).env("BAKE_HOME",&home).current_dir(&root).arg("build").status().unwrap(); assert!(s.success());
-              let app_name = if cfg!(windows) { "app.exe" } else { "app" };
-              let s = Command::new(app.join("bin/debug").join(app_name)).status().unwrap();
-              assert!(s.success());
-          }'''
-          if needle not in s:
-              raise SystemExit('dependency runtime test block not found')
-          p.write_text(s.replace(needle, replacement, 1))
-      - name: install Rust 1.98.1
+          cat .ci/bakers-port-0* | base64 --decode > port.tar.gz
+          echo '02bef2cffe36afc44f69232f8ec95f2c9fe8e1aa81dc42026812ccb6be2e98fb  port.tar.gz' | sha256sum -c -
+          tar -xzf port.tar.gz
+      - name: Install Rust 1.98.1
         shell: bash
         run: |
           rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
           rustup default 1.98.1
-      - name: enable MSVC build tools
+      - name: Enable MSVC build tools
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
-      - name: format
+      - name: Format
         working-directory: bake-rust-port
         run: cargo fmt
-      - name: clippy
+      - name: Clippy
         working-directory: bake-rust-port
         run: cargo clippy --all-targets -- -D warnings
-      - name: test
+      - name: Test
         working-directory: bake-rust-port
         run: cargo test --all-targets
-      - name: release
+      - name: Release build
         working-directory: bake-rust-port
         run: cargo build --release
+
+  siecs:
+    needs: rust
+    runs-on: ubuntu-24.04
+    env:
+      BAKE_HOME: ${{ runner.temp }}/bake-home
+      CC: gcc-14
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack bakers source
+        shell: bash
+        run: |
+          cat .ci/bakers-port-0* | base64 --decode > port.tar.gz
+          echo '02bef2cffe36afc44f69232f8ec95f2c9fe8e1aa81dc42026812ccb6be2e98fb  port.tar.gz' | sha256sum -c -
+          tar -xzf port.tar.gz
+      - name: Install Rust 1.98.1
+        shell: bash
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+      - name: Build bakers
+        working-directory: bake-rust-port
+        run: cargo build --release
+      - name: Clone siecs
+        run: git clone https://github.com/suleymanlaarabi/siecs.git
+      - name: Build siecs recursively
+        working-directory: siecs
+        run: ../bake-rust-port/target/release/bakers rebuild . -r --cfg debug
+      - name: Run exact user scenario
+        working-directory: siecs
+        run: ../bake-rust-port/target/release/bakers test
+      - name: Build and run C++ tests
+        working-directory: siecs
+        run: |
+          ../bake-rust-port/target/release/bakers rebuild test/cpp -r --cfg debug
+          ../bake-rust-port/target/release/bakers run test/cpp --cfg debug

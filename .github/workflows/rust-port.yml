@@ -30,6 +30,7 @@ jobs:
           import runpy
           from pathlib import Path
           runpy.run_path('.ci/apply-bakers-fixes.py')
+          runpy.run_path('.ci/apply-bakers-windows-fixes.py')
           p = Path('bake-rust-port/src/project.rs')
           p.write_text(p.read_text().replace('    env, fs,\n    path::{Path, PathBuf},', '    env,\n    path::{Path, PathBuf},'))
       - name: Install Rust 1.98.1
@@ -78,6 +79,7 @@ jobs:
           import runpy
           from pathlib import Path
           runpy.run_path('.ci/apply-bakers-fixes.py')
+          runpy.run_path('.ci/apply-bakers-windows-fixes.py')
           p = Path('bake-rust-port/src/project.rs')
           p.write_text(p.read_text().replace('    env, fs,\n    path::{Path, PathBuf},', '    env,\n    path::{Path, PathBuf},'))
       - name: Install Rust 1.98.1

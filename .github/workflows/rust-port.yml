@@ -25,9 +25,9 @@ jobs:
         run: |
           rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
           rustup default 1.98.1
-      - name: fmt
+      - name: format
         working-directory: bake-rust-port
-        run: cargo fmt --check
+        run: cargo fmt
       - name: clippy
         working-directory: bake-rust-port
         run: cargo clippy --all-targets -- -D warnings

@@ -72,7 +72,38 @@ jobs:
           p = Path('bake-rust-port/src/project.rs')
           s = p.read_text().replace('    pub manifest: PathBuf,\n', '')
           s = s.replace('        Ok(Self { root, manifest, id, kind, cfg })', '        Ok(Self { root, id, kind, cfg })')
-          p.write_text(s)
+          old = '''        let manifest = manifest.as_ref().canonicalize()
+              .with_context(|| format!("canonicalizing {}", manifest.as_ref().display()))?;
+          let root = manifest.parent().context("project.json has no parent")?.to_path_buf();'''
+          new = '''        let manifest = normalize_path(
+              manifest
+                  .as_ref()
+                  .canonicalize()
+                  .with_context(|| format!("canonicalizing {}", manifest.as_ref().display()))?,
+          );
+          let root = manifest.parent().context("project.json has no parent")?.to_path_buf();'''
+          if old not in s:
+              raise SystemExit('project canonicalize block not found')
+          s = s.replace(old, new)
+          marker = '\nfn not_ignored(e: &DirEntry) -> bool {'
+          helper = '''
+          fn normalize_path(path: PathBuf) -> PathBuf {
+              #[cfg(windows)]
+              {
+                  let text = path.to_string_lossy();
+                  if let Some(rest) = text.strip_prefix(r"\\\\?\\UNC\\") {
+                      return PathBuf::from(format!(r"\\\\{rest}"));
+                  }
+                  if let Some(rest) = text.strip_prefix(r"\\\\?\\") {
+                      return PathBuf::from(rest);
+                  }
+              }
+              path
+          }
+          '''
+          if marker not in s:
+              raise SystemExit('project helper marker not found')
+          p.write_text(s.replace(marker, '\n' + helper + marker))
 
           p = Path('bake-rust-port/src/env.rs')
           p.write_text(p.read_text().replace('    Ok(serde_json::from_str(&text).context("parsing bake environment config")?)', '    serde_json::from_str(&text).context("parsing bake environment config")'))

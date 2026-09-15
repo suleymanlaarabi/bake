@@ -25,7 +25,13 @@ jobs:
           pathlib.Path('port.tar.gz').write_bytes(data)
           tarfile.open('port.tar.gz', 'r:gz').extractall('.')
       - name: Apply current compatibility fixes
-        run: python .ci/apply-bakers-fixes.py
+        shell: python
+        run: |
+          import runpy
+          from pathlib import Path
+          runpy.run_path('.ci/apply-bakers-fixes.py')
+          p = Path('bake-rust-port/src/project.rs')
+          p.write_text(p.read_text().replace('    env, fs,\n    path::{Path, PathBuf},', '    env,\n    path::{Path, PathBuf},'))
       - name: Install Rust 1.98.1
         shell: bash
         run: |
@@ -67,7 +73,13 @@ jobs:
           pathlib.Path('port.tar.gz').write_bytes(data)
           tarfile.open('port.tar.gz', 'r:gz').extractall('.')
       - name: Apply current compatibility fixes
-        run: python .ci/apply-bakers-fixes.py
+        shell: python
+        run: |
+          import runpy
+          from pathlib import Path
+          runpy.run_path('.ci/apply-bakers-fixes.py')
+          p = Path('bake-rust-port/src/project.rs')
+          p.write_text(p.read_text().replace('    env, fs,\n    path::{Path, PathBuf},', '    env,\n    path::{Path, PathBuf},'))
       - name: Install Rust 1.98.1
         shell: bash
         run: |

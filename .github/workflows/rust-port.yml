@@ -72,19 +72,19 @@ jobs:
           p = Path('bake-rust-port/src/project.rs')
           s = p.read_text().replace('    pub manifest: PathBuf,\n', '')
           s = s.replace('        Ok(Self { root, manifest, id, kind, cfg })', '        Ok(Self { root, id, kind, cfg })')
-          old = '''        let manifest = manifest.as_ref().canonicalize()
-              .with_context(|| format!("canonicalizing {}", manifest.as_ref().display()))?;
-          let root = manifest.parent().context("project.json has no parent")?.to_path_buf();'''
-          new = '''        let manifest = normalize_path(
+          load_fn = s.index('    pub fn load(')
+          manifest_start = s.index('        let manifest = ', load_fn)
+          root_start = s.index('        let root = ', manifest_start)
+          root_end = s.index('\n', root_start)
+          replacement = '''        let manifest = normalize_path(
               manifest
                   .as_ref()
                   .canonicalize()
                   .with_context(|| format!("canonicalizing {}", manifest.as_ref().display()))?,
           );
-          let root = manifest.parent().context("project.json has no parent")?.to_path_buf();'''
-          if old not in s:
-              raise SystemExit('project canonicalize block not found')
-          s = s.replace(old, new)
+          let root = manifest.parent().context("project.json has no parent")?.to_path_buf();
+          '''
+          s = s[:manifest_start] + replacement + s[root_end + 1:]
           marker = '\nfn not_ignored(e: &DirEntry) -> bool {'
           helper = '''
           fn normalize_path(path: PathBuf) -> PathBuf {
@@ -103,7 +103,7 @@ jobs:
           '''
           if marker not in s:
               raise SystemExit('project helper marker not found')
-          p.write_text(s.replace(marker, '\n' + helper + marker))
+          p.write_text(s.replace(marker, '\n' + helper + marker, 1))
 
           p = Path('bake-rust-port/src/env.rs')
           p.write_text(p.read_text().replace('    Ok(serde_json::from_str(&text).context("parsing bake environment config")?)', '    serde_json::from_str(&text).context("parsing bake environment config")'))

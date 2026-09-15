@@ -25,14 +25,7 @@ jobs:
           pathlib.Path('port.tar.gz').write_bytes(data)
           tarfile.open('port.tar.gz', 'r:gz').extractall('.')
       - name: Apply current compatibility fixes
-        shell: python
-        run: |
-          from pathlib import Path
-          p = Path('bake-rust-port/src/env.rs')
-          s = p.read_text()
-          s = s.replace('    env, fs,\n    path::{Path, PathBuf},', '    env, fs,\n    ffi::OsStr,\n    path::{Path, PathBuf},')
-          s = s.replace('fn set_var(name: &str, value: &Path) {\n    unsafe { env::set_var(name, value) };\n}', 'fn set_var(name: &str, value: impl AsRef<OsStr>) {\n    unsafe { env::set_var(name, value) };\n}')
-          p.write_text(s)
+        run: python .ci/apply-bakers-fixes.py
       - name: Install Rust 1.98.1
         shell: bash
         run: |
@@ -74,14 +67,7 @@ jobs:
           pathlib.Path('port.tar.gz').write_bytes(data)
           tarfile.open('port.tar.gz', 'r:gz').extractall('.')
       - name: Apply current compatibility fixes
-        shell: python
-        run: |
-          from pathlib import Path
-          p = Path('bake-rust-port/src/env.rs')
-          s = p.read_text()
-          s = s.replace('    env, fs,\n    path::{Path, PathBuf},', '    env, fs,\n    ffi::OsStr,\n    path::{Path, PathBuf},')
-          s = s.replace('fn set_var(name: &str, value: &Path) {\n    unsafe { env::set_var(name, value) };\n}', 'fn set_var(name: &str, value: impl AsRef<OsStr>) {\n    unsafe { env::set_var(name, value) };\n}')
-          p.write_text(s)
+        run: python .ci/apply-bakers-fixes.py
       - name: Install Rust 1.98.1
         shell: bash
         run: |

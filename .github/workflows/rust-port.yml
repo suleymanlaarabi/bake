@@ -1,0 +1,39 @@
+name: rust-port
+on:
+  push:
+    branches: ['chatgpt/rust-port-validation']
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: unpack port
+        shell: python
+        run: |
+          import base64, tarfile
+          data = base64.b64decode(open('.ci/bake-rust-port.tar.gz.b64', encoding='ascii').read())
+          open('bake-rust-port-ci.tar.gz','wb').write(data)
+          tarfile.open('bake-rust-port-ci.tar.gz','r:gz').extractall('.')
+      - name: install Rust 1.98.1
+        shell: bash
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.98.1
+      - name: fmt
+        working-directory: bake-rust-port
+        run: cargo fmt --check
+      - name: clippy
+        working-directory: bake-rust-port
+        run: cargo clippy --all-targets -- -D warnings
+      - name: test
+        working-directory: bake-rust-port
+        run: cargo test --all-targets
+      - name: release
+        working-directory: bake-rust-port
+        run: cargo build --release

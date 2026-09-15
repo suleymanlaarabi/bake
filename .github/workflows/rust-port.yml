@@ -36,7 +36,20 @@ jobs:
           if start != -1:
               end=s.find('\n    pub fn language(&self)', start)
               s=s[:start]+s[end:]
-          s=s.replace("                if let Some(s) = item.as_str() {\n                    if s.contains('/') {\n                        *item = Value::String(s.replace('/', \".\"));\n                    }\n                }", "                if let Some(s) = item.as_str()\n                    && s.contains('/')\n                {\n                    *item = Value::String(s.replace('/', \".\"));\n                }")
+          old1="""                if let Some(s) = item.as_str() {
+                    if s.contains('/') { *item = Value::String(s.replace('/', ".")); }
+                }"""
+          old2="""                if let Some(s) = item.as_str() {
+                    if s.contains('/') {
+                        *item = Value::String(s.replace('/', "."));
+                    }
+                }"""
+          new="""                if let Some(s) = item.as_str()
+                    && s.contains('/')
+                {
+                    *item = Value::String(s.replace('/', "."));
+                }"""
+          s=s.replace(old1,new).replace(old2,new)
           p.write_text(s)
           p=Path('bake-rust-port/src/project.rs')
           s=p.read_text().replace('    pub manifest: PathBuf,\n','')
